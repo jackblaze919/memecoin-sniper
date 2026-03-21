@@ -87,7 +87,7 @@ function normalizeOverview(data) {
     volume30m: parseFloat(data.v30mUSD) || 0,
     liquidity: parseFloat(data.liquidity) || 0,
     marketCap: parseFloat(data.mc) || parseFloat(data.realMc) || 0,
-    holderCount: parseInt(data.holder) || 0,
+    holderCount: data.holder != null ? parseInt(data.holder) : null,
     // Trade counts — field names may vary, guard accordingly
     buy30m: parseInt(data.buy30m) || 0,
     sell30m: parseInt(data.sell30m) || 0,

@@ -30,7 +30,7 @@ async function upsert(token) {
       price_usd = COALESCE(EXCLUDED.price_usd, tokens.price_usd),
       volume_24h = COALESCE(EXCLUDED.volume_24h, tokens.volume_24h),
       last_scored_at = NOW(),
-      data = COALESCE(EXCLUDED.data, tokens.data)
+      data = COALESCE(tokens.data, '{}'::jsonb) || COALESCE(EXCLUDED.data, '{}'::jsonb)
   `, [address, symbol, name, pairAddress, totalScore, discoveryScore, flowScore,
     mispricingScore, safetyScore, antiFomoRejected != null ? antiFomoRejected : null, antiFomoReason || null,
     safetyGatePassed != null ? safetyGatePassed : null, holderCount, liquidityUsd, marketCapUsd, priceUsd, volume24h,
