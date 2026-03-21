@@ -1,0 +1,26 @@
+{
+  "name": "memecoin-sniper",
+  "version": "1.0.0",
+  "description": "Solana memecoin edge-detection and auto-trading bot",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "migrate": "node scripts/migrate.js",
+    "test:health": "node scripts/test-health.js",
+    "test:quote": "node scripts/test-quote.js",
+    "test:dex": "node scripts/test-dexscreener.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.95.0",
+    "bs58": "^5.0.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "pg": "^8.13.0",
+    "pino": "^9.4.0",
+    "resend": "^4.0.0"
+  }
+}
