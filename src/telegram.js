@@ -229,11 +229,20 @@ async function handleCandidates(msg) {
       await reply(msg.chat.id, 'No candidates');
       return;
     }
-    let text = '🔍 Top Candidates:\n\n';
+    const isScannerMode = config.tradingMode === 'scanner';
+    let text = isScannerMode
+      ? '🔍 Discovered Candidates (not ranked in scanner mode):\n\n'
+      : '🔍 Top Candidates:\n\n';
     for (const c of candidates) {
-      text += `${c.symbol || '?'} | Score: ${(c.total_score || 0).toFixed(1)} | `;
-      text += `Liq: ${formatUsd(c.liquidity_usd)} | `;
-      text += `${c.safety_gate_passed ? '✅' : '❌'} safe\n`;
+      if (isScannerMode) {
+        // Scanner mode: show discovery data only — scores are not computed
+        text += `${c.symbol || '?'} | Liq: ${formatUsd(c.liquidity_usd)} | `;
+        text += `MCap: ${formatUsd(c.market_cap_usd)}\n`;
+      } else {
+        text += `${c.symbol || '?'} | Score: ${(c.total_score || 0).toFixed(1)} | `;
+        text += `Liq: ${formatUsd(c.liquidity_usd)} | `;
+        text += `${c.safety_gate_passed ? '✅' : '❌'} safe\n`;
+      }
     }
     await reply(msg.chat.id, text);
   } catch (err) {

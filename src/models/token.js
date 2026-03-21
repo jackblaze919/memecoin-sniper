@@ -32,8 +32,8 @@ async function upsert(token) {
       last_scored_at = NOW(),
       data = COALESCE(EXCLUDED.data, tokens.data)
   `, [address, symbol, name, pairAddress, totalScore, discoveryScore, flowScore,
-    mispricingScore, safetyScore, antiFomoRejected || false, antiFomoReason || null,
-    safetyGatePassed || false, holderCount, liquidityUsd, marketCapUsd, priceUsd, volume24h,
+    mispricingScore, safetyScore, antiFomoRejected != null ? antiFomoRejected : null, antiFomoReason || null,
+    safetyGatePassed != null ? safetyGatePassed : null, holderCount, liquidityUsd, marketCapUsd, priceUsd, volume24h,
     JSON.stringify(data || {})]);
 }
 
