@@ -241,7 +241,22 @@ async function handleCandidates(msg) {
       } else {
         text += `${c.symbol || '?'} | Score: ${(c.total_score || 0).toFixed(1)} | `;
         text += `Liq: ${formatUsd(c.liquidity_usd)} | `;
-        text += `${c.safety_gate_passed ? '✅' : '❌'} safe\n`;
+        text += `${c.safety_gate_passed ? '✅' : '❌'} safe`;
+        // Show why safety gate failed
+        if (!c.safety_gate_passed && c.data?.safetyDetails) {
+          const s = c.data.safetyDetails;
+          const reasons = [];
+          if (s.missingData?.length > 0) reasons.push(`missing: ${s.missingData.join(',')}`);
+          if (s.freezeAuthorityInactive === false) reasons.push('freeze auth');
+          if (s.mintAuthorityInactive === false) reasons.push('mint auth');
+          if (s.top10Pct !== null && s.top10Pct > 40) reasons.push(`top10: ${s.top10Pct}%`);
+          if (s.lpControlled === true) reasons.push('LP controlled');
+          if (s.holderCount !== null && s.holderCount < config.minHolderCount) reasons.push(`holders: ${s.holderCount}`);
+          if (s.slippageOk === false) reasons.push('slippage');
+          if (s.hasTransferFee === true) reasons.push('transfer fee');
+          if (reasons.length > 0) text += ` (${reasons.join(', ')})`;
+        }
+        text += '\n';
       }
     }
     await reply(msg.chat.id, text);

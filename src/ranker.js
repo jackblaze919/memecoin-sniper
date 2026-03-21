@@ -110,6 +110,14 @@ async function scoreCandidate(address, candidate) {
     totalScore: totalScore.toFixed(1),
     buyEligible: result.buyEligible,
     safetyGatePassed,
+    safetyMissingData: safety.missingData,
+    safetyFreeze: safety.freezeAuthorityInactive,
+    safetyMint: safety.mintAuthorityInactive,
+    safetyTop10: safety.top10Pct,
+    safetyHolders: safety.holderCount,
+    safetyLP: safety.lpControlled,
+    safetySlippage: safety.slippageOk,
+    safetyTransferFee: safety.hasTransferFee,
     antiFomo: antiFomo.rejected ? antiFomo.reason : 'pass',
   }, 'Candidate scored');
 
@@ -224,8 +232,11 @@ async function runSafetyGate(address) {
 }
 
 function evaluateSafetyGate(g) {
-  // If any required data is missing, cannot pass
-  if (g.missingData.length > 0) return false;
+  // Required data: authority check (Helius) and overview (Birdeye overview).
+  // Security endpoint (Birdeye /defi/token_security) requires paid tier —
+  // treat as optional. If missing, skip those checks but don't auto-fail.
+  const requiredMissing = g.missingData.filter((d) => d !== 'security');
+  if (requiredMissing.length > 0) return false;
 
   // Freeze authority must be inactive (null = no authority = safe)
   if (g.freezeAuthorityInactive === false) return false;
@@ -233,19 +244,19 @@ function evaluateSafetyGate(g) {
   // Mint authority must be inactive
   if (g.mintAuthorityInactive === false) return false;
 
-  // Top 10 holders must be <= 40%
+  // Top 10 holders must be <= 40% (only if security data available)
   if (g.top10Pct !== null && g.top10Pct > 40) return false;
 
-  // LP not effectively controlled by one wallet
+  // LP not effectively controlled by one wallet (only if security data available)
   if (g.lpControlled === true) return false;
 
-  // Holder count >= 100
+  // Holder count >= configured minimum
   if (g.holderCount !== null && g.holderCount < config.minHolderCount) return false;
 
   // Slippage acceptable
   if (g.slippageOk === false) return false;
 
-  // No transfer fee surprises
+  // No transfer fee surprises (only if security data available)
   if (g.hasTransferFee === true) return false;
 
   return true;
