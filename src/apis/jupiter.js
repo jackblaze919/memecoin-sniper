@@ -1,7 +1,12 @@
+const config = require('../config');
 const logger = require('../logger');
 const { retry, fetchWithTimeout } = require('../utils');
 
-const BASE_URL = 'https://api.jup.ag';
+// lite-api.jup.ag is Jupiter's free-tier endpoint (no key required).
+// api.jup.ag requires a paid API key from portal.jup.ag.
+function getBaseUrl() {
+  return config.jupiterApiKey ? 'https://api.jup.ag' : 'https://lite-api.jup.ag';
+}
 
 // SOL mint address
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -16,10 +21,10 @@ async function getQuote({ inputMint, outputMint, amount, slippageBps = 300 }) {
       amount: amount.toString(),
       slippageBps: slippageBps.toString(),
     });
-    const url = `${BASE_URL}/swap/v1/quote?${params}`;
-    const res = await fetchWithTimeout(url, {
-      headers: { 'Accept': 'application/json' },
-    }, 15000);
+    const url = `${getBaseUrl()}/swap/v1/quote?${params}`;
+    const headers = { 'Accept': 'application/json' };
+    if (config.jupiterApiKey) headers['X-API-KEY'] = config.jupiterApiKey;
+    const res = await fetchWithTimeout(url, { headers }, 15000);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`Jupiter quote ${res.status}: ${text.substring(0, 200)}`);
@@ -32,10 +37,12 @@ async function getQuote({ inputMint, outputMint, amount, slippageBps = 300 }) {
 // SAFETY: No retry on swap POST. If it fails, caller must re-quote and retry explicitly.
 // Blind retry could produce duplicate swap intents with different blockhashes.
 async function getSwapTransaction({ quoteResponse, userPublicKey }) {
-  const url = `${BASE_URL}/swap/v1/swap`;
+  const url = `${getBaseUrl()}/swap/v1/swap`;
+  const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json' };
+  if (config.jupiterApiKey) headers['X-API-KEY'] = config.jupiterApiKey;
   const res = await fetchWithTimeout(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    headers,
     body: JSON.stringify({
       quoteResponse,
       userPublicKey,

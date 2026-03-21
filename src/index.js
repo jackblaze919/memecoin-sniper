@@ -58,32 +58,25 @@ async function startup() {
   }
 
   if (!healthResult.healthy) {
-    const failedChecks = Object.entries(healthResult.checks)
-      .filter(([, c]) => !c.ok)
+    const failedRequired = Object.entries(healthResult.checks)
+      .filter(([name, c]) => !c.ok && healthResult.required.includes(name))
       .map(([name, c]) => `${name}: ${c.error || c.note}`);
 
-    logger.error({ failedChecks }, 'Startup health checks failed');
-
+    logger.fatal({ failedRequired }, 'Required health checks failed');
     await telegram.sendAlert(
-      `❌ Startup health checks failed:\n${failedChecks.join('\n')}`
+      `❌ Required health checks failed:\n${failedRequired.join('\n')}`
     ).catch(() => {});
-
-    // In scanner mode, allow startup with just DB + DexScreener
-    if (config.tradingMode === 'scanner') {
-      const dbOk = healthResult.checks.database?.ok;
-      const dexOk = healthResult.checks.dexscreener?.ok;
-      if (dbOk && dexOk) {
-        logger.warn('Scanner mode — proceeding with partial health');
-      } else {
-        logger.fatal('Cannot start even in scanner mode — DB or DexScreener down');
-        process.exit(1);
-      }
-    } else {
-      logger.fatal('Cannot start trading bot with failed health checks');
-      process.exit(1);
-    }
+    process.exit(1);
   } else {
-    logger.info('All health checks passed');
+    // Log non-required checks that failed (informational)
+    const optionalFailed = Object.entries(healthResult.checks)
+      .filter(([name, c]) => !c.ok && !healthResult.required.includes(name));
+    if (optionalFailed.length > 0) {
+      for (const [name, c] of optionalFailed) {
+        logger.warn({ check: name, error: c.error }, 'Optional health check failed');
+      }
+    }
+    logger.info({ required: healthResult.required }, 'All required health checks passed');
     await telegram.sendAlert(`✅ Memecoin Sniper started in ${config.tradingMode} mode`);
   }
 

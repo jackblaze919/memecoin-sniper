@@ -29,10 +29,10 @@ async function request(path, label) {
   }, { maxRetries: 2, baseDelay: 1500, label: `birdeye:${label}` });
 }
 
-// GET /defi/v3/token/overview?address={TOKEN}
+// GET /defi/token_overview?address={TOKEN}
 async function getTokenOverview(address) {
   try {
-    const data = await request(`/defi/v3/token/overview?address=${address}`, 'overview');
+    const data = await request(`/defi/token_overview?address=${address}`, 'overview');
     return normalizeOverview(data);
   } catch (err) {
     logger.error({ err, address }, 'Birdeye getTokenOverview failed');
@@ -40,10 +40,10 @@ async function getTokenOverview(address) {
   }
 }
 
-// GET /defi/v3/token/security?address={TOKEN}
+// GET /defi/token_security?address={TOKEN}
 async function getTokenSecurity(address) {
   try {
-    const data = await request(`/defi/v3/token/security?address=${address}`, 'security');
+    const data = await request(`/defi/token_security?address=${address}`, 'security');
     return normalizeSecurity(data);
   } catch (err) {
     logger.error({ err, address }, 'Birdeye getTokenSecurity failed');
@@ -51,10 +51,10 @@ async function getTokenSecurity(address) {
   }
 }
 
-// GET /defi/v3/token/holder?address={TOKEN}
+// GET /defi/token_holder?address={TOKEN}
 async function getTokenHolders(address) {
   try {
-    const data = await request(`/defi/v3/token/holder?address=${address}`, 'holders');
+    const data = await request(`/defi/token_holder?address=${address}`, 'holders');
     return normalizeHolders(data);
   } catch (err) {
     logger.error({ err, address }, 'Birdeye getTokenHolders failed');
@@ -66,7 +66,7 @@ async function getTokenHolders(address) {
 async function testApiKey() {
   // Use SOL token overview as a test
   const data = await request(
-    '/defi/v3/token/overview?address=So11111111111111111111111111111111111111112',
+    '/defi/token_overview?address=So11111111111111111111111111111111111111112',
     'test'
   );
   return !!data;

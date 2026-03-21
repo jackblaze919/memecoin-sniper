@@ -11,6 +11,7 @@ const config = {
   // Solana
   heliusApiKey: process.env.HELIUS_API_KEY,
   birdeyeApiKey: process.env.BIRDEYE_API_KEY,
+  jupiterApiKey: process.env.JUPITER_API_KEY,
   solanaRpcUrl: process.env.SOLANA_RPC_URL,
   solanaPrivateKey: process.env.SOLANA_PRIVATE_KEY,
 

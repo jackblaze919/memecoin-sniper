@@ -30,9 +30,18 @@ async function runAll() {
   // 7. Config
   checks.config = checkConfig();
 
-  const healthy = Object.values(checks).every((c) => c.ok);
+  // Only checks required for the current mode determine overall health.
+  // Scanner needs DB + DexScreener. Paper adds Birdeye (ranker). Live needs everything.
+  const REQUIRED = {
+    scanner:   ['database', 'dexscreener', 'config'],
+    paper:     ['database', 'dexscreener', 'birdeye', 'config'],
+    tiny_live: ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
+    live:      ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
+  };
+  const required = REQUIRED[config.tradingMode] || REQUIRED.live;
+  const healthy = required.every((name) => checks[name]?.ok);
 
-  return { healthy, checks };
+  return { healthy, checks, required };
 }
 
 async function checkDatabase() {
