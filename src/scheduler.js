@@ -16,6 +16,17 @@ let reconcileInterval = null;
 let dailyResetInterval = null;
 let dailyReportInterval = null;
 
+// Ring buffer of recent skip reasons — accessible via /skips
+const MAX_SKIPS = 30;
+const recentSkips = [];
+function recordSkip(entry) {
+  recentSkips.push({ ...entry, at: new Date().toISOString() });
+  if (recentSkips.length > MAX_SKIPS) recentSkips.shift();
+}
+function getRecentSkips(n = 10) {
+  return recentSkips.slice(-n).reverse();
+}
+
 function start() {
   if (running) {
     logger.warn('Scheduler already running');
@@ -95,18 +106,20 @@ async function runRankTick() {
     const ineligible = ranked.filter((r) => !r.buyEligible && r.totalScore >= config.buyScoreThreshold);
     logger.info({ ranked: ranked.length, buyEligible: eligible.length }, 'Rank tick complete');
 
-    // Log why high-score candidates were NOT eligible
+    // Log + record why high-score candidates were NOT eligible
     for (const c of ineligible) {
       const reasons = [];
-      if (c.totalScore < config.buyScoreThreshold) reasons.push(`score ${c.totalScore.toFixed(1)} < ${config.buyScoreThreshold}`);
-      if (!c.safetyGatePassed) reasons.push('safety gate failed');
-      if (c.antiFomoRejected) reasons.push(`anti-FOMO: ${c.antiFomoReason}`);
-      logger.info({
-        address: c.address,
-        symbol: c.symbol,
-        score: c.totalScore.toFixed(1),
-        reasons,
-      }, 'High-score candidate NOT eligible');
+      if (!c.safetyGatePassed) reasons.push('safety_gate_failed');
+      if (c.antiFomoRejected) reasons.push(`anti_fomo: ${c.antiFomoReason}`);
+      logger.info({ address: c.address, symbol: c.symbol, score: c.totalScore.toFixed(1), reasons }, 'High-score candidate NOT eligible');
+      recordSkip({ symbol: c.symbol, score: c.totalScore.toFixed(1), reasons });
+    }
+
+    // Also log candidates with score >= 65 but below threshold
+    for (const c of ranked) {
+      if (c.totalScore >= 65 && c.totalScore < config.buyScoreThreshold && !ineligible.includes(c)) {
+        recordSkip({ symbol: c.symbol, score: c.totalScore.toFixed(1), reasons: [`score_below_threshold (${c.totalScore.toFixed(1)} < ${config.buyScoreThreshold})`] });
+      }
     }
 
     // In paper/live modes, attempt to buy eligible candidates
@@ -116,10 +129,10 @@ async function runRankTick() {
       const result = await executor.tryBuy(candidate);
       if (result.bought) {
         logger.info({ address: candidate.address, symbol: candidate.symbol }, 'Buy executed');
-        // Small delay between buys
         await sleep(2000);
       } else {
         logger.info({ address: candidate.address, symbol: candidate.symbol, reasons: result.reasons }, 'Buy attempt rejected');
+        recordSkip({ symbol: candidate.symbol, score: candidate.totalScore.toFixed(1), reasons: result.reasons });
       }
     }
   } catch (err) {
@@ -172,4 +185,4 @@ async function checkDailyReport() {
   }
 }
 
-module.exports = { start, stop };
+module.exports = { start, stop, getRecentSkips };

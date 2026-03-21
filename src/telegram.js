@@ -31,6 +31,8 @@ function registerCommands() {
   bot.onText(/\/config/, handleConfig);
   bot.onText(/\/health/, handleHealth);
   bot.onText(/\/candidates/, handleCandidates);
+  bot.onText(/\/skips/, handleSkips);
+  bot.onText(/\/report/, handleReport);
 
   bot.on('polling_error', (err) => {
     logger.error({ err: err.message }, 'Telegram polling error');
@@ -125,16 +127,20 @@ async function handleMode(msg, match) {
 
 async function handlePositions(msg) {
   if (!isAuthorized(msg)) return;
+  const { minutesAgo } = require('./utils');
   const positions = await positionModel.getOpen();
   if (positions.length === 0) {
     await reply(msg.chat.id, 'No open positions');
     return;
   }
-  let text = '📈 Open Positions:\n\n';
+  let text = `📈 Open Positions (${positions.length}):\n\n`;
   for (const p of positions) {
-    text += `${p.symbol} | ${formatPct(p.current_pnl_pct)} | `;
-    text += `${formatSol(p.entry_amount_sol)} SOL | `;
-    text += `${truncateAddress(p.token_address)}\n`;
+    const holdMin = minutesAgo(p.entry_timestamp);
+    const holdStr = holdMin < 60 ? holdMin.toFixed(0) + 'm' : (holdMin / 60).toFixed(1) + 'h';
+    const pnlEmoji = (p.current_pnl_pct || 0) >= 0 ? '🟢' : '🔴';
+    text += `${pnlEmoji} ${p.symbol} | ${formatPct(p.current_pnl_pct)} | `;
+    text += `${formatSol(p.entry_amount_sol)} SOL\n`;
+    text += `   Score: ${p.entry_score?.toFixed(1) || '?'} | Hold: ${holdStr} | ${p.mode}\n`;
   }
   await reply(msg.chat.id, text);
 }
@@ -148,9 +154,13 @@ async function handleHistory(msg) {
   }
   let text = '📜 Recent Trades:\n\n';
   for (const p of positions) {
-    const emoji = (p.final_pnl_sol || 0) >= 0 ? '🟢' : '🔴';
-    text += `${emoji} ${p.symbol} | ${formatPct(p.final_pnl_pct)} | `;
-    text += `${p.exit_reason || p.status}\n`;
+    const emoji = p.status === 'open' ? '⏳' : (p.final_pnl_sol || 0) >= 0 ? '🟢' : '🔴';
+    const holdMin = p.hold_time_minutes || 0;
+    const holdStr = holdMin < 60 ? holdMin.toFixed(0) + 'm' : (holdMin / 60).toFixed(1) + 'h';
+    text += `${emoji} ${p.symbol} | ${formatPct(p.final_pnl_pct)} | ${formatSol(p.final_pnl_sol || 0)} SOL\n`;
+    if (p.status !== 'open') {
+      text += `   ${p.exit_reason || '?'} | ${holdStr} | ${p.mode}\n`;
+    }
   }
   await reply(msg.chat.id, text);
 }
@@ -258,6 +268,38 @@ async function handleCandidates(msg) {
         }
         text += '\n';
       }
+    }
+    await reply(msg.chat.id, text);
+  } catch (err) {
+    await reply(msg.chat.id, `Error: ${err.message}`);
+  }
+}
+
+async function handleReport(msg) {
+  if (!isAuthorized(msg)) return;
+  try {
+    await reply(msg.chat.id, '📊 Generating report...');
+    const report = require('./report');
+    await report.sendDailyReport();
+  } catch (err) {
+    await reply(msg.chat.id, `Error: ${err.message}`);
+  }
+}
+
+async function handleSkips(msg) {
+  if (!isAuthorized(msg)) return;
+  try {
+    const scheduler = require('./scheduler');
+    const skips = scheduler.getRecentSkips(10);
+    if (skips.length === 0) {
+      await reply(msg.chat.id, 'No recent skips');
+      return;
+    }
+    let text = '⏭️ Recent Skips:\n\n';
+    for (const s of skips) {
+      const time = s.at.slice(11, 16);
+      text += `${s.symbol} | Score: ${s.score} | ${time}\n`;
+      text += `   ${s.reasons.join(', ')}\n`;
     }
     await reply(msg.chat.id, text);
   } catch (err) {

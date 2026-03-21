@@ -121,12 +121,15 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
   // Release buy lock — position is created, lock served its purpose
   await risk.releaseTradeLock(address, 'buy');
 
+  const ageMin = pair?.pairCreatedAt ? minutesAgo(pair.pairCreatedAt) : null;
   await telegram.sendAlert(
     `📝 PAPER BUY: ${symbol}\n` +
-    `Address: ${truncateAddress(address)}\n` +
-    `Amount: ${formatSol(positionSol)} SOL\n` +
-    `Score: ${score.toFixed(1)}\n` +
-    `Price: $${entryPrice.toFixed(8)}`
+    `Score: ${score.toFixed(1)} | Impact: ${quote.priceImpactPct.toFixed(2)}%\n` +
+    `Price: $${entryPrice.toFixed(8)}\n` +
+    `Amount: ${formatSol(positionSol)} SOL → ${tokensReceived.toLocaleString()} tokens\n` +
+    `Liq: ${formatUsd(pair?.liquidityUsd || 0)} | Holders: ${overview?.holderCount ?? '?'}\n` +
+    (ageMin ? `Age: ${ageMin < 60 ? ageMin.toFixed(0) + 'm' : (ageMin / 60).toFixed(1) + 'h'}\n` : '') +
+    `${truncateAddress(address)}`
   );
 
   return { bought: true, positionId: posId, mode: 'paper' };
@@ -504,11 +507,13 @@ async function executeExit(pos, pair, pnlPct, reason) {
   }
 
   const emoji = pnlSol >= 0 ? '🟢' : '🔴';
+  const holdMin = minutesAgo(pos.entry_timestamp);
   await telegram.sendAlert(
     `${emoji} EXIT: ${pos.symbol}\n` +
     `Reason: ${reason}\n` +
+    `Entry: $${pos.entry_price.toFixed(8)} → Exit: $${exitPrice.toFixed(8)}\n` +
     `PnL: ${formatSol(pnlSol)} SOL (${formatPct(pnlPct)})\n` +
-    `Hold: ${minutesAgo(pos.entry_timestamp).toFixed(0)} min\n` +
+    `Hold: ${holdMin < 60 ? holdMin.toFixed(0) + 'm' : (holdMin / 60).toFixed(1) + 'h'}\n` +
     `TX: ${exitTx}`
   );
 
