@@ -91,11 +91,26 @@ async function runRankTick() {
     }
 
     const ranked = await ranker.rank(candidateMap);
-    logger.info({ ranked: ranked.length, buyEligible: ranked.filter((r) => r.buyEligible).length }, 'Rank tick complete');
+    const eligible = ranked.filter((r) => r.buyEligible);
+    const ineligible = ranked.filter((r) => !r.buyEligible && r.totalScore >= config.buyScoreThreshold);
+    logger.info({ ranked: ranked.length, buyEligible: eligible.length }, 'Rank tick complete');
+
+    // Log why high-score candidates were NOT eligible
+    for (const c of ineligible) {
+      const reasons = [];
+      if (c.totalScore < config.buyScoreThreshold) reasons.push(`score ${c.totalScore.toFixed(1)} < ${config.buyScoreThreshold}`);
+      if (!c.safetyGatePassed) reasons.push('safety gate failed');
+      if (c.antiFomoRejected) reasons.push(`anti-FOMO: ${c.antiFomoReason}`);
+      logger.info({
+        address: c.address,
+        symbol: c.symbol,
+        score: c.totalScore.toFixed(1),
+        reasons,
+      }, 'High-score candidate NOT eligible');
+    }
 
     // In paper/live modes, attempt to buy eligible candidates
-    for (const candidate of ranked) {
-      if (!candidate.buyEligible) continue;
+    for (const candidate of eligible) {
       if (!running) break;
 
       const result = await executor.tryBuy(candidate);
@@ -103,6 +118,8 @@ async function runRankTick() {
         logger.info({ address: candidate.address, symbol: candidate.symbol }, 'Buy executed');
         // Small delay between buys
         await sleep(2000);
+      } else {
+        logger.info({ address: candidate.address, symbol: candidate.symbol, reasons: result.reasons }, 'Buy attempt rejected');
       }
     }
   } catch (err) {

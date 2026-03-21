@@ -73,9 +73,10 @@ config.canExecuteRealTrades = function canExecuteRealTrades() {
 };
 
 config.getMaxPositionSol = function getMaxPositionSol() {
+  if (config.tradingMode === 'paper') return config.maxPositionSol;
   if (config.tradingMode === 'tiny_live') return 0.01;
   if (config.tradingMode === 'live') return config.maxPositionSol;
-  return 0;
+  return 0; // scanner mode — no trades
 };
 
 config.getMaxConcurrentPositions = function getMaxConcurrentPositions() {
