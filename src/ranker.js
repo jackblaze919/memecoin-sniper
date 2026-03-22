@@ -37,6 +37,8 @@ async function scoreCandidate(address, candidate) {
   const safetyGatePassed = safety.passed;
 
   // -- Fetch Birdeye overview for scoring --
+  // NOTE: safety gate (below) uses the same cache key and may have
+  // already populated or negative-cached it. Check for sentinel.
   const overviewKey = `overview:${address}`;
   let overview = cache.get(overviewKey);
   let overviewStale = false;
@@ -46,15 +48,18 @@ async function scoreCandidate(address, candidate) {
       cache.set(overviewKey, overview, TTL.HOLDER_COUNT);
       await stats.incrementBirdeyeCus(1);
     } else {
-      // Fresh fetch failed — try stale cache as fallback
       const stale = cache.getStale(overviewKey);
-      if (stale) {
+      if (stale && !stale.value?._negativeCached) {
         overview = stale.value;
         overviewStale = true;
-        logger.warn({ address, ageMs: stale.ageMs }, 'Birdeye overview: using stale cache (fresh fetch failed)');
+      } else {
+        // Negative cache so we don't retry for 5 min
+        cache.set(overviewKey, { _negativeCached: true }, TTL.HOLDER_COUNT);
+        overview = null;
       }
     }
   }
+  if (overview && overview._negativeCached) overview = null;
 
   // -- Compute scores --
   const discoveryScore = computeDiscoveryScore(pair, overview);
@@ -221,6 +226,7 @@ async function runSafetyGate(address) {
   }
 
   // 3. Holder count via Birdeye overview
+  // Uses same cache key as scoring overview — may already be negative-cached.
   const overviewKeyGate = `overview:${address}`;
   let overviewGate = cache.get(overviewKeyGate);
   if (!overviewGate) {
@@ -229,16 +235,16 @@ async function runSafetyGate(address) {
       cache.set(overviewKeyGate, overviewGate, TTL.HOLDER_COUNT);
       await stats.incrementBirdeyeCus(1);
     } else {
-      // Stale fallback — overview is REQUIRED by evaluateSafetyGate.
-      // Using stale data prevents a temporary Birdeye outage from
-      // blocking all candidates for the entire scan cycle.
       const staleOv = cache.getStale(overviewKeyGate);
-      if (staleOv) {
+      if (staleOv && !staleOv.value?._negativeCached) {
         overviewGate = staleOv.value;
-        logger.warn({ address, ageMs: staleOv.ageMs }, 'Birdeye overview (safety gate): using stale cache');
+      } else {
+        cache.set(overviewKeyGate, { _negativeCached: true }, TTL.HOLDER_COUNT);
+        overviewGate = null;
       }
     }
   }
+  if (overviewGate && overviewGate._negativeCached) overviewGate = null;
 
   if (overviewGate) {
     result.holderCount = overviewGate.holderCount;

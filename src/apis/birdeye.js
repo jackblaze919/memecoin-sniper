@@ -30,7 +30,7 @@ async function request(path, label) {
       throw new Error(`Birdeye ${label} returned success=false`);
     }
     return data.data || data;
-  }, { maxRetries: 3, baseDelay: 3000, label: `birdeye:${label}` });
+  }, { maxRetries: 1, baseDelay: 2000, label: `birdeye:${label}` });
 }
 
 // GET /defi/token_overview?address={TOKEN}
