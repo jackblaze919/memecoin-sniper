@@ -296,9 +296,11 @@ async function handleReport(msg) {
   try {
     await reply(msg.chat.id, '📊 Generating report...');
     const report = require('./report');
-    await report.sendDailyReport();
+    const text = await report.generateReportText();
+    await reply(msg.chat.id, text);
   } catch (err) {
-    await reply(msg.chat.id, `Error: ${err.message}`);
+    logger.error({ err }, '/report command failed');
+    await reply(msg.chat.id, `❌ Report failed: ${err.message}`);
   }
 }
 
