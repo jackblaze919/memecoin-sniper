@@ -6,6 +6,7 @@ const executor = require('./executor');
 const risk = require('./risk');
 const report = require('./report');
 const reconciler = require('./reconciler');
+const telegram = require('./telegram');
 const { sleep } = require('./utils');
 
 let running = false;
