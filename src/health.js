@@ -31,20 +31,19 @@ async function runAll() {
   checks.config = checkConfig();
 
   // Only checks required for the current mode determine overall health.
-  // Scanner needs DB + DexScreener. Paper adds Birdeye (ranker). Live needs everything.
-  //
-  // Paper mode: Birdeye is SOFT-REQUIRED — if it's down, health is "degraded"
-  // not "unhealthy". The ranker uses stale cache as fallback, so paper mode
-  // continues functioning. Live/tiny_live: Birdeye is hard-required.
+  // Scanner needs DB + DexScreener. Paper mode only hard-requires DB + config
+  // so that temporary DexScreener/Birdeye outages don't cause a restart loop.
+  // The scanner and ranker have their own error handling and stale-cache
+  // fallbacks. Live/tiny_live: everything is hard-required (fail-closed).
   const HARD_REQUIRED = {
     scanner:   ['database', 'dexscreener', 'config'],
-    paper:     ['database', 'dexscreener', 'config'],
+    paper:     ['database', 'config'],
     tiny_live: ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
     live:      ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
   };
   const SOFT_REQUIRED = {
     scanner:   [],
-    paper:     ['birdeye'],
+    paper:     ['dexscreener', 'birdeye'],
     tiny_live: [],
     live:      [],
   };
@@ -111,8 +110,15 @@ async function checkJupiter() {
 async function checkDexScreener() {
   try {
     const results = await dexscreener.search('SOL');
-    if (!results || results.length === 0) {
-      return { ok: false, error: 'No search results' };
+    if (!results) {
+      return { ok: false, error: 'DexScreener returned null' };
+    }
+    if (results.length === 0) {
+      // Empty results = API is reachable but returned no matches.
+      // This is NOT a failure — the search query may simply have no
+      // Solana matches right now. Treating this as fatal caused a
+      // restart loop (6 restarts in 2 minutes).
+      return { ok: true, note: 'Search returned 0 results (API reachable)' };
     }
     return { ok: true };
   } catch (err) {
