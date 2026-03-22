@@ -186,14 +186,21 @@ async function runSafetyGate(address) {
       // Stale fallback — security is already optional in evaluateSafetyGate,
       // but stale data is better than no data for the optional checks
       const staleSec = cache.getStale(secKey);
-      if (staleSec) {
+      if (staleSec && !staleSec.value._negativeCached) {
         security = staleSec.value;
         logger.warn({ address, ageMs: staleSec.ageMs }, 'Birdeye security: using stale cache');
+      } else {
+        // Negative cache: the security endpoint likely requires a paid
+        // Birdeye plan.  Cache the failure so we don't retry 50 × 3
+        // retries = 150 wasted HTTP requests every 90-second rank tick.
+        cache.set(secKey, { _negativeCached: true }, TTL.TOP_HOLDERS);
+        security = null;
       }
     }
   }
 
-  if (security) {
+  // A negative-cache sentinel is not real security data
+  if (security && !security._negativeCached) {
     result.top10Pct = security.top10HolderPercent;
     result.hasTransferFee = security.transferFeeEnable || false;
     result.lpControlled = security.creatorPercentage > 30 ? true : false;
