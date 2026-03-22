@@ -152,6 +152,22 @@ async function resetDaily() {
   logger.info('Daily risk counters reset (including consecutive_losses)');
 }
 
+// Clean stranded buy locks from crashed processes.
+// After repeated restarts, buy locks for specific tokens can persist
+// because the process died between acquireLock and releaseLock.
+// Only cleans 'buy' locks (not rebuy_locks which are intentional).
+async function cleanStrandedBuyLocks() {
+  const result = await db.query(
+    `DELETE FROM trade_locks WHERE action = 'buy' AND date = $1 RETURNING token_address`,
+    [todayDate()]
+  );
+  if (result.rowCount > 0) {
+    logger.warn({ cleaned: result.rowCount, tokens: result.rows.map(r => r.token_address) },
+      'Cleaned stranded buy locks from crashed processes');
+  }
+}
+
 module.exports = {
   canTrade, recordTradeOutcome, acquireTradeLock, releaseTradeLock, resetDaily,
+  cleanStrandedBuyLocks,
 };

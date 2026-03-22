@@ -36,7 +36,14 @@ async function releaseExitLock(positionId, lockType) {
 async function tryBuy(candidate) {
   const { address, symbol, totalScore, pair, overview, safety } = candidate;
 
-  logger.info({ address, symbol, totalScore }, 'Evaluating buy');
+  logger.info({
+    address,
+    symbol,
+    totalScore,
+    mode: config.tradingMode,
+    hasPair: !!pair,
+    pairPrice: pair?.priceUsd,
+  }, 'DIAG:tryBuy — attempting paper buy');
 
   // Risk check
   const riskCheck = await risk.canTrade(address);
@@ -48,8 +55,10 @@ async function tryBuy(candidate) {
   // Acquire trade lock
   const locked = await risk.acquireTradeLock(address, 'buy');
   if (!locked) {
+    logger.warn({ address, symbol }, 'DIAG:tryBuy — trade lock already exists (stranded from crash?)');
     return { bought: false, reasons: ['Could not acquire trade lock'] };
   }
+  logger.info({ address, symbol }, 'DIAG:tryBuy — risk passed, lock acquired, entering execution');
 
   try {
     const positionSol = config.getMaxPositionSol();

@@ -98,6 +98,14 @@ async function startup() {
     logger.error({ err }, 'Startup reconciliation failed — continuing');
   }
 
+  // Clean stranded buy locks from previous crash/restart cycles
+  const risk = require('./risk');
+  try {
+    await risk.cleanStrandedBuyLocks();
+  } catch (err) {
+    logger.error({ err }, 'Stranded lock cleanup failed — continuing');
+  }
+
   // Start scheduler
   scheduler.start();
 }

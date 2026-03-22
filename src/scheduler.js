@@ -143,6 +143,14 @@ async function runRankTick() {
     }
 
     // In paper/live modes, attempt to buy eligible candidates
+    if (eligible.length > 0) {
+      logger.info({
+        eligibleCount: eligible.length,
+        symbols: eligible.map(c => c.symbol).join(', '),
+      }, 'DIAG:buyLoop — entering executor loop');
+    } else {
+      logger.info('DIAG:buyLoop — eligible list is EMPTY, no buys attempted');
+    }
     for (const candidate of eligible) {
       if (!running) break;
 
