@@ -15,7 +15,8 @@ app.use(express.json());
 app.get('/health', async (req, res) => {
   try {
     const result = await health.runAll();
-    res.status(result.healthy ? 200 : 503).json(result);
+    const status = result.healthy ? 200 : 503;
+    res.status(status).json(result);
   } catch (err) {
     res.status(500).json({ healthy: false, error: err.message });
   }
@@ -68,16 +69,27 @@ async function startup() {
     ).catch(() => {});
     process.exit(1);
   } else {
+    // Log soft-required checks that failed (degraded but not fatal)
+    const softFailed = Object.entries(healthResult.checks)
+      .filter(([name, c]) => !c.ok && (healthResult.softRequired || []).includes(name));
+    if (softFailed.length > 0) {
+      for (const [name, c] of softFailed) {
+        logger.warn({ check: name, error: c.error }, 'Soft-required health check failed — degraded mode');
+      }
+    }
     // Log non-required checks that failed (informational)
     const optionalFailed = Object.entries(healthResult.checks)
-      .filter(([name, c]) => !c.ok && !healthResult.required.includes(name));
+      .filter(([name, c]) => !c.ok && !healthResult.required.includes(name) && !(healthResult.softRequired || []).includes(name));
     if (optionalFailed.length > 0) {
       for (const [name, c] of optionalFailed) {
         logger.warn({ check: name, error: c.error }, 'Optional health check failed');
       }
     }
-    logger.info({ required: healthResult.required }, 'All required health checks passed');
-    await telegram.sendAlert(`✅ Memecoin Sniper started in ${config.tradingMode} mode`);
+    const startMsg = healthResult.degraded
+      ? `⚠️ Memecoin Sniper started in ${config.tradingMode} mode (degraded — ${softFailed.map(([n]) => n).join(', ')} unavailable)`
+      : `✅ Memecoin Sniper started in ${config.tradingMode} mode`;
+    logger.info({ required: healthResult.required, degraded: healthResult.degraded }, 'Health checks passed');
+    await telegram.sendAlert(startMsg);
   }
 
   // Start Express

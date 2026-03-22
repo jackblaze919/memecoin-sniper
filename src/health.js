@@ -30,18 +30,26 @@ async function runAll() {
   // 7. Config
   checks.config = checkConfig();
 
-  // Only checks required for the current mode determine overall health.
-  // Scanner needs DB + DexScreener. Paper adds Birdeye (ranker). Live needs everything.
+  // Hard-required checks determine overall health (healthy flag).
+  // Soft-required checks cause degraded status but do not fail health.
   const REQUIRED = {
     scanner:   ['database', 'dexscreener', 'config'],
-    paper:     ['database', 'dexscreener', 'birdeye', 'config'],
+    paper:     ['database', 'dexscreener', 'config'],
     tiny_live: ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
     live:      ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
   };
+  const SOFT_REQUIRED = {
+    scanner:   [],
+    paper:     ['birdeye'],
+    tiny_live: [],
+    live:      [],
+  };
   const required = REQUIRED[config.tradingMode] || REQUIRED.live;
+  const softRequired = SOFT_REQUIRED[config.tradingMode] || [];
   const healthy = required.every((name) => checks[name]?.ok);
+  const degraded = healthy && softRequired.some((name) => !checks[name]?.ok);
 
-  return { healthy, checks, required };
+  return { healthy, degraded, checks, required, softRequired };
 }
 
 async function checkDatabase() {

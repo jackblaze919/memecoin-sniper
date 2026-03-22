@@ -221,9 +221,24 @@ async function handleHealth(msg) {
     const result = await health.runAll();
     let text = '🏥 Health Check:\n';
     for (const [check, status] of Object.entries(result.checks)) {
-      text += `${status.ok ? '✅' : '❌'} ${check}\n`;
+      const isSoft = result.softRequired?.includes(check);
+      if (status.ok) {
+        text += `✅ ${check}\n`;
+      } else if (isSoft) {
+        text += `⚠️ ${check}\n`;
+      } else {
+        text += `❌ ${check}\n`;
+      }
     }
-    text += `\nOverall: ${result.healthy ? '✅ Healthy' : '❌ Unhealthy'}`;
+    let overall;
+    if (!result.healthy) {
+      overall = '❌ Unhealthy';
+    } else if (result.degraded) {
+      overall = '⚠️ Degraded';
+    } else {
+      overall = '✅ Healthy';
+    }
+    text += `\nOverall: ${overall}`;
     await reply(msg.chat.id, text);
   } catch (err) {
     await reply(msg.chat.id, `Error: ${err.message}`);
