@@ -114,24 +114,35 @@ async function scan() {
 /**
  * Check inclusion filter and return { passed, reason }.
  * Reason is a short string explaining why the token was rejected.
+ *
+ * Paper mode uses relaxed thresholds so the pipeline can be validated.
+ * Tokens with enough liq+mcap are almost always > 72h old; tokens
+ * young enough (< 72h) rarely have $25k+ liquidity. The combination
+ * creates a deadlock where zero tokens pass. Paper mode widens the
+ * net so we can evaluate the scoring and exit strategy.
  */
 function checkInclusionFilter(pair) {
   if (!pair.pairCreatedAt) return { passed: false, reason: 'no_created_at' };
+
+  const isPaper = config.tradingMode === 'paper';
+  const minLiq = isPaper ? 10000 : config.minLiquidityUsd;      // $10k paper, $25k live
+  const minMcap = isPaper ? 25000 : 50000;                       // $25k paper, $50k live
+  const maxAgeH = isPaper ? 336 : config.maxTokenAgeHours;       // 14d paper, config live
 
   const ageMinutes = minutesAgo(pair.pairCreatedAt);
 
   if (ageMinutes < config.minTokenAgeMinutes)
     return { passed: false, reason: `too_young: ${ageMinutes.toFixed(0)}m < ${config.minTokenAgeMinutes}m` };
 
-  if (pair.liquidityUsd < config.minLiquidityUsd)
-    return { passed: false, reason: `low_liq: $${pair.liquidityUsd.toFixed(0)} < $${config.minLiquidityUsd}` };
+  if (pair.liquidityUsd < minLiq)
+    return { passed: false, reason: `low_liq: $${pair.liquidityUsd.toFixed(0)} < $${minLiq}` };
 
-  if (pair.marketCapUsd < 50000)
-    return { passed: false, reason: `low_mcap: $${pair.marketCapUsd.toFixed(0)} < $50k` };
+  if (pair.marketCapUsd < minMcap)
+    return { passed: false, reason: `low_mcap: $${pair.marketCapUsd.toFixed(0)} < $${minMcap.toLocaleString()}` };
 
   const ageHours = ageMinutes / 60;
-  if (ageHours > 72)
-    return { passed: false, reason: `too_old: ${ageHours.toFixed(0)}h > 72h` };
+  if (ageHours > maxAgeH)
+    return { passed: false, reason: `too_old: ${ageHours.toFixed(0)}h > ${maxAgeH}h` };
 
   return { passed: true, reason: null };
 }
