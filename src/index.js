@@ -131,6 +131,31 @@ async function startup() {
     logger.error({ err }, 'Stranded lock cleanup failed — continuing');
   }
 
+  // Close stale paper positions that were never properly exited.
+  // Previous crash/restart cycles left paper positions "open" indefinitely,
+  // blocking new buys (max_concurrent_positions: 3/3).
+  if (config.tradingMode === 'paper') {
+    try {
+      const positionModel = require('./models/position');
+      const stale = await positionModel.getOpen();
+      if (stale.length > 0) {
+        for (const pos of stale) {
+          await positionModel.close(pos.id, {
+            exitPrice: pos.current_price || pos.entry_price || 0,
+            exitReason: 'Stale paper position closed on startup',
+            exitTx: 'startup_cleanup_' + Date.now(),
+            finalPnlSol: 0,
+            finalPnlPct: 0,
+          });
+        }
+        logger.info({ count: stale.length }, 'Closed stale paper positions on startup');
+        await telegram.sendAlert(`🧹 Closed ${stale.length} stale paper position(s) from previous session`);
+      }
+    } catch (err) {
+      logger.error({ err }, 'Stale position cleanup failed — continuing');
+    }
+  }
+
   // Start scheduler
   scheduler.start();
 }
