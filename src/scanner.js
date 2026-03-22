@@ -104,8 +104,25 @@ async function scan() {
     await stats.incrementScanned(candidates.size);
 
     logger.info({ totalCandidates: candidates.size }, 'Scanner tick complete');
+
+    // One-time Telegram alert on first successful scan showing discovery results
+    if (!scan._firstScanSent) {
+      const telegram = require('./telegram');
+      await telegram.sendAlert(
+        `🔍 SCANNER: profiles=${profiles.length} boosted=${boosted.length} → ` +
+        `${newCount} new candidates (${skippedFilter} filtered, ${skippedNoPairs} no pairs)\n` +
+        `Total in-memory: ${candidates.size}`
+      );
+      scan._firstScanSent = true;
+    }
   } catch (err) {
-    logger.error({ err }, 'Scanner tick error');
+    logger.error({ err: err.message, stack: err.stack }, 'Scanner tick error');
+    // One-time alert on scan failure
+    if (!scan._firstScanSent) {
+      const telegram = require('./telegram');
+      await telegram.sendAlert(`❌ SCANNER FAILED: ${err.message}`).catch(() => {});
+      scan._firstScanSent = true;
+    }
   }
 
   return getCandidateList();

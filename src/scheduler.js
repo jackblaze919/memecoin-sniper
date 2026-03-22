@@ -40,8 +40,9 @@ function start() {
   // Run first scan immediately
   runScanTick();
 
-  // Ranker: every 90s (offset from scanner)
+  // Ranker: every 90s (offset from scanner by 30s so first scan has time to populate)
   setTimeout(() => {
+    runRankTick(); // Run immediately on first offset tick
     rankInterval = setInterval(runRankTick, 90000);
   }, 30000);
 
@@ -97,9 +98,20 @@ async function runRankTick() {
   try {
     const candidateMap = scanner.getCandidateMap();
     if (candidateMap.size === 0) {
-      logger.debug('No candidates to rank');
+      logger.info('No candidates to rank (scanner Map is empty)');
+      // Send ONE alert so the user knows the scanner isn't finding tokens
+      if (!runRankTick._emptySent) {
+        await telegram.sendAlert(
+          `🔍 PIPELINE DIAG: scanner Map is empty — 0 candidates to rank.\n` +
+          `The scanner may be failing to discover tokens, or all tokens fail the inclusion filter.\n` +
+          `Check /candidates for stale DB data vs live scanner output.`
+        );
+        runRankTick._emptySent = true;
+      }
       return;
     }
+    // Clear the empty-alert flag once candidates appear
+    runRankTick._emptySent = false;
 
     const ranked = await ranker.rank(candidateMap);
     const eligible = ranked.filter((r) => r.buyEligible);
