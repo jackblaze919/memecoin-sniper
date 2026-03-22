@@ -32,16 +32,40 @@ async function runAll() {
 
   // Only checks required for the current mode determine overall health.
   // Scanner needs DB + DexScreener. Paper adds Birdeye (ranker). Live needs everything.
-  const REQUIRED = {
+  //
+  // Paper mode: Birdeye is SOFT-REQUIRED — if it's down, health is "degraded"
+  // not "unhealthy". The ranker uses stale cache as fallback, so paper mode
+  // continues functioning. Live/tiny_live: Birdeye is hard-required.
+  const HARD_REQUIRED = {
     scanner:   ['database', 'dexscreener', 'config'],
-    paper:     ['database', 'dexscreener', 'birdeye', 'config'],
+    paper:     ['database', 'dexscreener', 'config'],
     tiny_live: ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
     live:      ['database', 'wallet', 'jupiter', 'dexscreener', 'birdeye', 'telegram', 'config'],
   };
-  const required = REQUIRED[config.tradingMode] || REQUIRED.live;
-  const healthy = required.every((name) => checks[name]?.ok);
+  const SOFT_REQUIRED = {
+    scanner:   [],
+    paper:     ['birdeye'],
+    tiny_live: [],
+    live:      [],
+  };
 
-  return { healthy, checks, required };
+  const hardRequired = HARD_REQUIRED[config.tradingMode] || HARD_REQUIRED.live;
+  const softRequired = SOFT_REQUIRED[config.tradingMode] || [];
+  const hardHealthy = hardRequired.every((name) => checks[name]?.ok);
+  const softHealthy = softRequired.every((name) => checks[name]?.ok);
+
+  // Tag soft-failed checks as degraded rather than failed
+  for (const name of softRequired) {
+    if (checks[name] && !checks[name].ok) {
+      checks[name].degraded = true;
+      checks[name].note = 'Temporarily unavailable — using cached/stale data if available';
+    }
+  }
+
+  const healthy = hardHealthy;
+  const degraded = hardHealthy && !softHealthy;
+
+  return { healthy, degraded, checks, required: hardRequired, softRequired };
 }
 
 async function checkDatabase() {
@@ -104,7 +128,17 @@ async function checkBirdeye() {
     const ok = await birdeye.testApiKey();
     return { ok };
   } catch (err) {
-    return { ok: false, error: err.message };
+    // Report the failure but also check if we have any cached Birdeye data
+    const { cache } = require('./cache');
+    const cacheSize = cache.size();
+    return {
+      ok: false,
+      error: err.message,
+      hasCachedData: cacheSize > 0,
+      note: cacheSize > 0
+        ? `API unreachable but ${cacheSize} cached entries available`
+        : 'API unreachable and no cached data',
+    };
   }
 }
 

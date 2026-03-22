@@ -99,6 +99,14 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
   const entryPrice = pair?.priceUsd || 0;
   const tokensReceived = safeNumber(quote.outAmount);
 
+  // SAFETY: Reject buy if entry price is 0 — pctChange(0, x) always returns 0,
+  // which silently disables the stop loss for the entire position lifetime.
+  if (!entryPrice || entryPrice <= 0) {
+    logger.warn({ address, symbol }, 'Paper buy blocked: entry price is 0 — stop loss would never fire');
+    await risk.releaseTradeLock(address, 'buy');
+    return { bought: false, reasons: ['Entry price is 0 — stop loss disabled'] };
+  }
+
   const posId = await positionModel.create({
     tokenAddress: address,
     symbol,
@@ -203,6 +211,18 @@ async function executeLiveBuy(address, symbol, score, lamports, positionSol, pai
   }
 
   const entryPrice = pair?.priceUsd || 0;
+
+  // SAFETY: Log warning if entry price is 0 — stop loss will be non-functional.
+  // For live trades we can't block (swap already executed), but we flag it loudly.
+  if (!entryPrice || entryPrice <= 0) {
+    logger.error({ address, symbol, signature: txResult.signature }, 'CRITICAL: Live buy has entry price 0 — stop loss disabled');
+    await telegram.sendAlert(
+      `🚨 CRITICAL: ${symbol} bought with entry_price=0\n` +
+      `Stop loss will NOT work. Manual exit needed.\n` +
+      `TX: ${txResult.signature}`
+    );
+  }
+
   const posId = await positionModel.create({
     tokenAddress: address,
     symbol,
@@ -263,14 +283,37 @@ async function evaluateExit(pos) {
   try {
     const address = pos.token_address;
 
-    // Get current price from DexScreener
+    // Determine if this position is in the danger zone (near stop loss).
+    // If last-known PnL is worse than half the stop threshold, bypass
+    // the market-data cache and force a fresh DexScreener fetch.
+    // This shrinks worst-case price staleness from ~90s to ~30s for at-risk positions.
+    const dangerThreshold = -(config.stopLossPct / 2); // e.g. -15% when stop is -30%
+    const lastPnl = pos.current_pnl_pct ?? 0;
+    const inDangerZone = lastPnl <= dangerThreshold;
+
     const cacheKey = `pairs:${address}`;
-    let pairs = cache.get(cacheKey);
+    let pairs = null;
+    let priceSource = 'fresh';
+    let cacheAgeMs = null;
+
+    if (!inDangerZone) {
+      // Normal path: use cached data if available
+      const cached = cache.getWithMeta(cacheKey);
+      if (cached) {
+        pairs = cached.value;
+        priceSource = 'cached';
+        cacheAgeMs = cached.ageMs;
+      }
+    }
+
     if (!pairs) {
+      // Fresh fetch: either cache miss or danger-zone bypass
       pairs = await dexscreener.getTokenPairs(address);
       if (pairs && pairs.length > 0) {
         cache.set(cacheKey, pairs, TTL.MARKET_DATA);
       }
+      priceSource = inDangerZone ? 'forced_fresh' : 'fresh';
+      cacheAgeMs = 0;
     }
 
     const pair = pairs && pairs.length > 0
@@ -278,22 +321,65 @@ async function evaluateExit(pos) {
       : null;
 
     if (!pair) {
-      logger.warn({ posId: pos.id, address }, 'Cannot get current price for position');
+      logger.warn({ posId: pos.id, address, priceSource }, 'Cannot get current price for position');
       return;
     }
 
     const currentPrice = pair.priceUsd;
     const entryPrice = pos.entry_price;
+
+    // OBSERVABILITY: Log price-source metadata on every exit check
+    logger.debug({
+      posId: pos.id,
+      symbol: pos.symbol,
+      priceSource,
+      cacheAgeMs,
+      inDangerZone,
+      lastPnl: lastPnl.toFixed(1),
+      currentPrice,
+    }, 'Exit price check');
+
+    // SAFETY: If entry_price is 0, pctChange returns 0 and stop loss never fires.
+    // Force-exit immediately and log the broken state.
+    if (!entryPrice || entryPrice <= 0) {
+      logger.error({ posId: pos.id, address, currentPrice, entryPrice }, 'ZERO_ENTRY_PRICE: Stop loss disabled — force-closing position');
+      const reason = 'Emergency exit: entry_price=0 (stop loss was disabled)';
+      // Compute approximate PnL using current price vs a Jupiter quote if possible
+      await executeExit(pos, pair, -100, reason);
+      return;
+    }
+
     const pnlPct = pctChange(entryPrice, currentPrice);
     const holdMinutes = minutesAgo(pos.entry_timestamp);
 
     await positionModel.updateCurrent(pos.id, currentPrice, pnlPct);
 
+    // OBSERVABILITY: Log when stop loss fires far below the threshold (gap-through).
+    // This helps distinguish "illiquid gap-down" from "bug" in post-mortems.
+    if (pnlPct <= -config.stopLossPct && pnlPct < -(config.stopLossPct * 2)) {
+      logger.warn({
+        posId: pos.id,
+        symbol: pos.symbol,
+        entryPrice,
+        currentPrice,
+        pnlPct: pnlPct.toFixed(1),
+        stopLoss: config.stopLossPct,
+        holdMinutes: holdMinutes.toFixed(0),
+        liquidity: pair.liquidityUsd,
+        label: 'GAP_THROUGH_STOP',
+      }, `Stop loss gap-through: expected exit ~-${config.stopLossPct}% but price is at ${pnlPct.toFixed(1)}%`);
+    }
+
     // Check exit conditions
     const exitReason = checkExitConditions(pos, pair, pnlPct, holdMinutes);
 
     if (exitReason) {
-      await executeExit(pos, pair, pnlPct, exitReason);
+      // OBSERVABILITY: Tag exit reason with gap-through label for Telegram
+      let taggedReason = exitReason;
+      if (exitReason.startsWith('Stop loss') && pnlPct < -(config.stopLossPct * 2)) {
+        taggedReason = `${exitReason} [GAP-THROUGH: liquidity=$${pair.liquidityUsd?.toFixed(0) || '?'}]`;
+      }
+      await executeExit(pos, pair, pnlPct, taggedReason);
       return;
     }
 
@@ -310,8 +396,8 @@ function checkExitConditions(pos, pair, pnlPct, holdMinutes) {
     return `Stop loss at ${pnlPct.toFixed(1)}%`;
   }
 
-  // Max hold time (4 hours)
-  if (holdMinutes >= 240) {
+  // Max hold time (1 hour)
+  if (holdMinutes >= 60) {
     return `Max hold time: ${holdMinutes.toFixed(0)} min`;
   }
 

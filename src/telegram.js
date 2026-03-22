@@ -219,11 +219,27 @@ async function handleHealth(msg) {
   try {
     const health = require('./health');
     const result = await health.runAll();
+    const allRelevant = [...(result.required || []), ...(result.softRequired || [])];
     let text = '🏥 Health Check:\n';
     for (const [check, status] of Object.entries(result.checks)) {
-      text += `${status.ok ? '✅' : '❌'} ${check}\n`;
+      const isRelevant = allRelevant.includes(check);
+      if (status.ok) {
+        text += `✅ ${check}`;
+      } else if (status.degraded) {
+        text += `⚠️ ${check} (degraded)`;
+      } else if (!isRelevant) {
+        text += `➖ ${check} (not required)`;
+      } else {
+        text += `❌ ${check}`;
+      }
+      if (status.note) text += ` — ${status.note}`;
+      text += '\n';
     }
-    text += `\nOverall: ${result.healthy ? '✅ Healthy' : '❌ Unhealthy'}`;
+    if (result.degraded) {
+      text += `\nOverall: ⚠️ Degraded (paper mode continues with cached data)`;
+    } else {
+      text += `\nOverall: ${result.healthy ? '✅ Healthy' : '❌ Unhealthy'}`;
+    }
     await reply(msg.chat.id, text);
   } catch (err) {
     await reply(msg.chat.id, `Error: ${err.message}`);

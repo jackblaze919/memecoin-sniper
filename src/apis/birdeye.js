@@ -16,7 +16,11 @@ async function request(path, label) {
         'X-API-KEY': config.birdeyeApiKey,
         'x-chain': 'solana',
       },
-    }, 15000);
+    }, 20000);
+    if (res.status === 429) {
+      // Rate limited — throw with explicit label so retry backoff kicks in
+      throw new Error(`Birdeye ${label} 429: rate limited`);
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(`Birdeye ${label} ${res.status}: ${text.substring(0, 200)}`);
@@ -26,7 +30,7 @@ async function request(path, label) {
       throw new Error(`Birdeye ${label} returned success=false`);
     }
     return data.data || data;
-  }, { maxRetries: 2, baseDelay: 1500, label: `birdeye:${label}` });
+  }, { maxRetries: 3, baseDelay: 3000, label: `birdeye:${label}` });
 }
 
 // GET /defi/token_overview?address={TOKEN}

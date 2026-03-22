@@ -34,11 +34,20 @@ async function scoreCandidate(address, candidate) {
   // -- Fetch Birdeye overview for scoring --
   const overviewKey = `overview:${address}`;
   let overview = cache.get(overviewKey);
+  let overviewStale = false;
   if (!overview) {
     overview = await birdeye.getTokenOverview(address);
     if (overview) {
       cache.set(overviewKey, overview, TTL.HOLDER_COUNT);
       await stats.incrementBirdeyeCus(1);
+    } else {
+      // Fresh fetch failed — try stale cache as fallback
+      const stale = cache.getStale(overviewKey);
+      if (stale) {
+        overview = stale.value;
+        overviewStale = true;
+        logger.warn({ address, ageMs: stale.ageMs }, 'Birdeye overview: using stale cache (fresh fetch failed)');
+      }
     }
   }
 
@@ -173,6 +182,14 @@ async function runSafetyGate(address) {
     if (security) {
       cache.set(secKey, security, TTL.TOP_HOLDERS);
       await stats.incrementBirdeyeCus(1);
+    } else {
+      // Stale fallback — security is already optional in evaluateSafetyGate,
+      // but stale data is better than no data for the optional checks
+      const staleSec = cache.getStale(secKey);
+      if (staleSec) {
+        security = staleSec.value;
+        logger.warn({ address, ageMs: staleSec.ageMs }, 'Birdeye security: using stale cache');
+      }
     }
   }
 
@@ -185,18 +202,27 @@ async function runSafetyGate(address) {
   }
 
   // 3. Holder count via Birdeye overview
-  const overviewKey = `overview:${address}`;
-  let overview = cache.get(overviewKey);
-  if (!overview) {
-    overview = await birdeye.getTokenOverview(address);
-    if (overview) {
-      cache.set(overviewKey, overview, TTL.HOLDER_COUNT);
+  const overviewKeyGate = `overview:${address}`;
+  let overviewGate = cache.get(overviewKeyGate);
+  if (!overviewGate) {
+    overviewGate = await birdeye.getTokenOverview(address);
+    if (overviewGate) {
+      cache.set(overviewKeyGate, overviewGate, TTL.HOLDER_COUNT);
       await stats.incrementBirdeyeCus(1);
+    } else {
+      // Stale fallback — overview is REQUIRED by evaluateSafetyGate.
+      // Using stale data prevents a temporary Birdeye outage from
+      // blocking all candidates for the entire scan cycle.
+      const staleOv = cache.getStale(overviewKeyGate);
+      if (staleOv) {
+        overviewGate = staleOv.value;
+        logger.warn({ address, ageMs: staleOv.ageMs }, 'Birdeye overview (safety gate): using stale cache');
+      }
     }
   }
 
-  if (overview) {
-    result.holderCount = overview.holderCount;
+  if (overviewGate) {
+    result.holderCount = overviewGate.holderCount;
   } else {
     result.missingData.push('overview');
   }

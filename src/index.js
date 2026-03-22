@@ -76,6 +76,12 @@ async function startup() {
         logger.warn({ check: name, error: c.error }, 'Optional health check failed');
       }
     }
+    if (healthResult.degraded) {
+      logger.warn('Health: DEGRADED — soft-required checks failed, running with cached data');
+      await telegram.sendAlert(
+        `⚠️ DEGRADED: Birdeye temporarily unavailable. Paper mode continues with cached data.`
+      ).catch(() => {});
+    }
     logger.info({ required: healthResult.required }, 'All required health checks passed');
     await telegram.sendAlert(`✅ Memecoin Sniper started in ${config.tradingMode} mode`);
   }

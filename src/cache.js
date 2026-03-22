@@ -12,10 +12,30 @@ class Cache {
     const entry = this.store.get(key);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {
-      this.store.delete(key);
+      // Do NOT delete here — leave the expired entry in the store so that
+      // getStale() can still retrieve it as a fallback when a fresh fetch
+      // fails. Cleanup of truly old entries is handled by cleanup() which
+      // respects the STALE_GRACE_MS window.
       return null;
     }
     return entry.value;
+  }
+
+  /**
+   * Return the cached value even if expired (stale). Returns null only if the
+   * key was never set. Used as a fallback when a fresh fetch fails — stale
+   * data from a few minutes ago is better than no data.
+   * Returns { value, ageMs, stale: boolean } or null.
+   */
+  getStale(key) {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+    const now = Date.now();
+    return {
+      value: entry.value,
+      ageMs: now - entry.createdAt,
+      stale: now > entry.expiresAt,
+    };
   }
 
   set(key, value, ttlMs) {
@@ -24,6 +44,17 @@ class Cache {
       expiresAt: Date.now() + ttlMs,
       createdAt: Date.now(),
     });
+  }
+
+  // Return value + age metadata. Returns { value, ageMs } or null.
+  getWithMeta(key) {
+    const entry = this.store.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+      // Don't delete — let cleanup() handle it (same as get())
+      return null;
+    }
+    return { value: entry.value, ageMs: Date.now() - entry.createdAt };
   }
 
   has(key) {
@@ -36,15 +67,16 @@ class Cache {
 
   cleanup() {
     const now = Date.now();
+    const STALE_GRACE_MS = 10 * 60 * 1000; // keep stale entries for 10 min as fallback
     let removed = 0;
     for (const [key, entry] of this.store) {
-      if (now > entry.expiresAt) {
+      if (now > entry.expiresAt + STALE_GRACE_MS) {
         this.store.delete(key);
         removed++;
       }
     }
     if (removed > 0) {
-      logger.debug({ removed }, 'Cache cleanup');
+      logger.debug({ removed }, 'Cache cleanup (stale grace: 10m)');
     }
   }
 
