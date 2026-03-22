@@ -6,7 +6,7 @@ const jupiter = require('./apis/jupiter');
 const tokenModel = require('./models/token');
 const stats = require('./models/stats');
 const { cache, TTL } = require('./cache');
-const { safeNumber, pctChange, clamp } = require('./utils');
+const { safeNumber, pctChange, clamp, minutesAgo } = require('./utils');
 
 // Run ranker on all current candidates
 async function rank(candidateMap) {
@@ -36,12 +36,11 @@ async function scoreCandidate(address, candidate) {
   const safety = await runSafetyGate(address);
   const safetyGatePassed = safety.passed;
 
-  // -- Fetch Birdeye overview for scoring --
-  // NOTE: safety gate (below) uses the same cache key and may have
-  // already populated or negative-cached it. Check for sentinel.
+  // -- Birdeye overview (optional enrichment, NOT required for scoring) --
+  // If Birdeye works, it adds holder count for the safety gate.
+  // If it doesn't, scoring uses DexScreener data exclusively.
   const overviewKey = `overview:${address}`;
   let overview = cache.get(overviewKey);
-  let overviewStale = false;
   if (!overview) {
     overview = await birdeye.getTokenOverview(address);
     if (overview) {
@@ -51,9 +50,7 @@ async function scoreCandidate(address, candidate) {
       const stale = cache.getStale(overviewKey);
       if (stale && !stale.value?._negativeCached) {
         overview = stale.value;
-        overviewStale = true;
       } else {
-        // Negative cache so we don't retry for 5 min
         cache.set(overviewKey, { _negativeCached: true }, TTL.HOLDER_COUNT);
         overview = null;
       }
@@ -61,20 +58,20 @@ async function scoreCandidate(address, candidate) {
   }
   if (overview && overview._negativeCached) overview = null;
 
-  // -- Compute scores --
+  // -- Compute scores (DexScreener-primary, Birdeye-bonus) --
   const discoveryScore = computeDiscoveryScore(pair, overview);
   const flowScore = computeFlowScore(pair, overview);
   const mispricingScore = computeMispricingScore(pair, overview);
   const safetyScore = computeSafetyScore(safety);
 
   const totalScore =
-    discoveryScore * 0.30 +
+    discoveryScore * 0.25 +
     flowScore * 0.30 +
-    mispricingScore * 0.20 +
+    mispricingScore * 0.25 +
     safetyScore * 0.20;
 
-  // -- Anti-FOMO check --
-  const antiFomo = checkAntiFomo(pair, overview);
+  // -- Anti-FOMO check (DexScreener-only, no Birdeye dependency) --
+  const antiFomo = checkAntiFomo(pair);
 
   // Persist scores
   await tokenModel.upsert({
@@ -115,14 +112,7 @@ async function scoreCandidate(address, candidate) {
     safetyGatePassed,
     antiFomoRejected: antiFomo.rejected,
     antiFomoReason: antiFomo.reason,
-    buyEligible: (() => {
-      // Paper mode: lower threshold (Birdeye is 400ing, pair-only scores cap ~65)
-      // and skip anti-FOMO (boosted memecoins inherently spike >200%)
-      const isPaper = config.tradingMode === 'paper';
-      const threshold = isPaper ? 55 : config.buyScoreThreshold;
-      const fomoBlock = isPaper ? false : antiFomo.rejected;
-      return totalScore >= threshold && safetyGatePassed && !fomoBlock;
-    })(),
+    buyEligible: totalScore >= config.buyScoreThreshold && safetyGatePassed && !antiFomo.rejected,
     holderCount: overview?.holderCount || safety.holderCount,
     liquidityUsd: pair?.liquidityUsd,
     pair,
@@ -134,17 +124,14 @@ async function scoreCandidate(address, candidate) {
     address,
     symbol: pair?.symbol,
     totalScore: totalScore.toFixed(1),
+    discoveryScore: discoveryScore.toFixed(1),
+    flowScore: flowScore.toFixed(1),
+    mispricingScore: mispricingScore.toFixed(1),
+    safetyScore: safetyScore.toFixed(1),
     buyEligible: result.buyEligible,
     safetyGatePassed,
-    safetyMissingData: safety.missingData,
-    safetyFreeze: safety.freezeAuthorityInactive,
-    safetyMint: safety.mintAuthorityInactive,
-    safetyTop10: safety.top10Pct,
-    safetyHolders: safety.holderCount,
-    safetyLP: safety.lpControlled,
-    safetySlippage: safety.slippageOk,
-    safetyTransferFee: safety.hasTransferFee,
     antiFomo: antiFomo.rejected ? antiFomo.reason : 'pass',
+    hasBirdeye: !!overview,
   }, 'Candidate scored');
 
   return result;
@@ -165,17 +152,12 @@ async function runSafetyGate(address) {
     missingData: [],
   };
 
-  // 1. Check freeze/mint authority via Helius
-  // SAFETY: If account info is null (network error, bad address, rate limit),
-  // we MUST treat authority as unknown and fail the safety gate.
-  // On Solana, null authority in parsed data = no authority = safe.
-  // But null accountInfo = we couldn't check = unsafe to assume.
+  // 1. Check freeze/mint authority via Helius (REQUIRED)
   const authKey = `auth:${address}`;
   let authInfo = cache.get(authKey);
   if (!authInfo) {
     const accountInfo = await helius.getAccountInfo(address);
     if (!accountInfo) {
-      // Could not retrieve account info — mark as unparsed
       authInfo = { parsed: false, mintAuthority: null, freezeAuthority: null };
     } else {
       authInfo = helius.parseMintAuthority(accountInfo);
@@ -184,14 +166,13 @@ async function runSafetyGate(address) {
   }
 
   if (!authInfo.parsed) {
-    // Could not determine authority state — fail safe, block buys
     result.missingData.push('authority');
   } else {
     result.freezeAuthorityInactive = authInfo.freezeAuthority === null;
     result.mintAuthorityInactive = authInfo.mintAuthority === null;
   }
 
-  // 2. Check top10 holders via Birdeye security
+  // 2. Birdeye security (optional — paid tier only, negative-cached)
   const secKey = `security:${address}`;
   let security = cache.get(secKey);
   if (!security) {
@@ -200,23 +181,16 @@ async function runSafetyGate(address) {
       cache.set(secKey, security, TTL.TOP_HOLDERS);
       await stats.incrementBirdeyeCus(1);
     } else {
-      // Stale fallback — security is already optional in evaluateSafetyGate,
-      // but stale data is better than no data for the optional checks
       const staleSec = cache.getStale(secKey);
       if (staleSec && !staleSec.value._negativeCached) {
         security = staleSec.value;
-        logger.warn({ address, ageMs: staleSec.ageMs }, 'Birdeye security: using stale cache');
       } else {
-        // Negative cache: the security endpoint likely requires a paid
-        // Birdeye plan.  Cache the failure so we don't retry 50 × 3
-        // retries = 150 wasted HTTP requests every 90-second rank tick.
         cache.set(secKey, { _negativeCached: true }, TTL.TOP_HOLDERS);
         security = null;
       }
     }
   }
 
-  // A negative-cache sentinel is not real security data
   if (security && !security._negativeCached) {
     result.top10Pct = security.top10HolderPercent;
     result.hasTransferFee = security.transferFeeEnable || false;
@@ -225,8 +199,7 @@ async function runSafetyGate(address) {
     result.missingData.push('security');
   }
 
-  // 3. Holder count via Birdeye overview
-  // Uses same cache key as scoring overview — may already be negative-cached.
+  // 3. Birdeye overview for holder count (optional, negative-cached)
   const overviewKeyGate = `overview:${address}`;
   let overviewGate = cache.get(overviewKeyGate);
   if (!overviewGate) {
@@ -274,149 +247,184 @@ async function runSafetyGate(address) {
     result.slippageOk = slippage !== null ? slippage < 5 : null;
     if (slippage === null) result.missingData.push('slippage');
   } else {
-    result.slippageOk = true; // Skip in scanner mode
+    result.slippageOk = true;
   }
 
-  // Evaluate gate
   result.passed = evaluateSafetyGate(result);
   return result;
 }
 
 function evaluateSafetyGate(g) {
-  // Required data: authority check (Helius) — must always be verified.
-  // Optional data (skip if missing, don't auto-fail):
-  //   - 'security': Birdeye token_security requires paid tier
-  //   - 'overview':  Birdeye token_overview may be degraded/stale;
-  //                  holderCount check at line below handles null gracefully
-  //   - 'slippage': Jupiter quote may be temporarily unavailable
-  // Only 'authority' is a hard requirement — without it we can't verify
-  // freeze/mint authority, which is the most critical safety check.
+  // Only 'authority' (Helius) is hard-required.
+  // security, overview, slippage are optional enrichment.
   const OPTIONAL_DATA = new Set(['security', 'overview', 'slippage']);
   const requiredMissing = g.missingData.filter((d) => !OPTIONAL_DATA.has(d));
   if (requiredMissing.length > 0) return false;
 
-  // Freeze authority must be inactive (null = no authority = safe)
   if (g.freezeAuthorityInactive === false) return false;
-
-  // Mint authority must be inactive
   if (g.mintAuthorityInactive === false) return false;
-
-  // Top 10 holders must be <= 40% (only if security data available)
   if (g.top10Pct !== null && g.top10Pct > 40) return false;
-
-  // LP not effectively controlled by one wallet (only if security data available)
   if (g.lpControlled === true) return false;
-
-  // Holder count >= configured minimum
   if (g.holderCount !== null && g.holderCount < config.minHolderCount) return false;
-
-  // Slippage acceptable
   if (g.slippageOk === false) return false;
-
-  // No transfer fee surprises (only if security data available)
   if (g.hasTransferFee === true) return false;
 
   return true;
 }
 
-// ---- Scoring Functions ----
+// ========================================================================
+// SCORING FUNCTIONS — DexScreener-primary, Birdeye-bonus
+//
+// Design principle: every score component can reach its full range using
+// DexScreener pair data alone. Birdeye overview adds a small bonus when
+// available but is never required for differentiation.
+//
+// Score ranges (DexScreener-only):
+//   Discovery:  30 – 95   (volume acceleration, buy momentum, age signal)
+//   Flow:       25 – 95   (buy/sell imbalance at 5m and 1h, conviction)
+//   Mispricing: 30 – 95   (vol/liq ratio, mcap/liq ratio, price efficiency)
+//   Safety:     50 – 80   (Helius authority + Jupiter slippage)
+//
+// Total range: 0.25*30 + 0.30*25 + 0.25*30 + 0.20*50 = 32.5  (worst)
+//              0.25*95 + 0.30*95 + 0.25*95 + 0.20*80 = 92.25 (best)
+// Threshold 70 is comfortably reachable with good DexScreener signals.
+// ========================================================================
 
 function computeDiscoveryScore(pair, overview) {
-  // Holder growth, maker count growth, volume growth
-  let score = 50; // baseline
+  let score = 40; // baseline (lower than before to create more range)
 
-  if (overview) {
-    // Holder growth proxy: higher holder count relative to age = better
-    const holderCount = overview.holderCount || 0;
-    if (holderCount > 500) score += 15;
-    else if (holderCount > 200) score += 10;
-    else if (holderCount > 100) score += 5;
+  if (!pair) return score;
 
-    // Volume growth: compare 30m volume to 1h/2 as baseline
-    const vol30m = overview.volume30m || 0;
-    const vol1hHalf = (overview.volume1h || 0) / 2;
-    if (vol1hHalf > 0 && vol30m > vol1hHalf * 1.2) {
-      score += 15; // accelerating
-    } else if (vol1hHalf > 0 && vol30m > vol1hHalf) {
-      score += 8;
-    }
+  // --- Volume acceleration (5m vs 1h) ---
+  // If recent 5m volume annualized exceeds 1h volume, activity is accelerating
+  const vol5m = pair.volume5m || 0;
+  const vol1h = pair.volume1h || 0;
+  if (vol1h > 0 && vol5m > 0) {
+    const accel = (vol5m * 12) / vol1h; // annualized 5m vs actual 1h
+    if (accel > 2.0) score += 20;       // strong acceleration
+    else if (accel > 1.3) score += 12;  // moderate acceleration
+    else if (accel > 0.8) score += 5;   // steady
+    // below 0.8 = decelerating, no bonus
   }
 
-  if (pair) {
-    // Maker count growth proxy: buys in 5m as share of 1h buys
-    const buys5m = pair.txnsBuys5m || 0;
-    const buys1h = pair.txnsBuys1h || 0;
-    if (buys1h > 0) {
-      const ratio = (buys5m * 12) / buys1h; // annualized to 1h
-      if (ratio > 1.5) score += 15;
-      else if (ratio > 1.0) score += 8;
-    }
+  // --- Buy momentum (5m buys annualized vs 1h buys) ---
+  const buys5m = pair.txnsBuys5m || 0;
+  const buys1h = pair.txnsBuys1h || 0;
+  if (buys1h > 0 && buys5m > 0) {
+    const buyAccel = (buys5m * 12) / buys1h;
+    if (buyAccel > 2.0) score += 15;
+    else if (buyAccel > 1.2) score += 8;
+  }
+
+  // --- Volume-to-liquidity ratio (activity relative to pool size) ---
+  const liquidity = pair.liquidityUsd || 0;
+  if (liquidity > 0 && vol1h > 0) {
+    const volLiqRatio = vol1h / liquidity;
+    if (volLiqRatio > 1.0) score += 10;      // very active
+    else if (volLiqRatio > 0.3) score += 5;   // moderately active
+  }
+
+  // --- Birdeye bonus: holder count (when available) ---
+  if (overview) {
+    const holderCount = overview.holderCount || 0;
+    if (holderCount > 500) score += 10;
+    else if (holderCount > 200) score += 5;
   }
 
   return clamp(score, 0, 100);
 }
 
 function computeFlowScore(pair, overview) {
-  let score = 50;
+  let score = 40; // baseline
 
-  if (pair) {
-    // Buy/sell ratio over 1h
-    const buys = pair.txnsBuys1h || 0;
-    const sells = pair.txnsSells1h || 0;
-    if (sells > 0) {
-      const ratio = buys / sells;
-      if (ratio > 2.0) score += 20;
-      else if (ratio > 1.5) score += 15;
-      else if (ratio > 1.2) score += 8;
-      else if (ratio < 0.8) score -= 15;
-    } else if (buys > 5) {
-      score += 15; // all buys, no sells
-    }
+  if (!pair) return score;
+
+  // --- 1h buy/sell imbalance (sustained flow) ---
+  const buys1h = pair.txnsBuys1h || 0;
+  const sells1h = pair.txnsSells1h || 0;
+  const total1h = buys1h + sells1h;
+  if (total1h > 0) {
+    const buyRatio = buys1h / total1h; // 0.0 to 1.0
+    if (buyRatio > 0.70) score += 20;       // strong buy dominance
+    else if (buyRatio > 0.60) score += 12;  // moderate buy dominance
+    else if (buyRatio > 0.55) score += 5;   // slight buy edge
+    else if (buyRatio < 0.35) score -= 15;  // strong sell pressure
+    else if (buyRatio < 0.45) score -= 8;   // moderate sell pressure
   }
 
+  // --- 5m buy/sell imbalance (short-term momentum) ---
+  const buys5m = pair.txnsBuys5m || 0;
+  const sells5m = pair.txnsSells5m || 0;
+  const total5m = buys5m + sells5m;
+  if (total5m > 0) {
+    const buyRatio5m = buys5m / total5m;
+    if (buyRatio5m > 0.70) score += 15;
+    else if (buyRatio5m > 0.60) score += 8;
+    else if (buyRatio5m < 0.30) score -= 10;
+  }
+
+  // --- Transaction volume conviction ---
+  // High buy count + high volume = real conviction, not wash trading
+  if (buys1h > 50 && (pair.volume1h || 0) > 10000) score += 10;
+  else if (buys1h > 20 && (pair.volume1h || 0) > 5000) score += 5;
+
+  // --- Birdeye bonus: unique buyers (when available) ---
   if (overview) {
-    // Unique buyers vs sellers
     const uniqueBuyers = overview.uniqueBuy30m || 0;
     const uniqueSellers = overview.uniqueSell30m || 0;
-    if (uniqueSellers > 0) {
-      const ratio = uniqueBuyers / uniqueSellers;
-      if (ratio > 2.0) score += 15;
-      else if (ratio > 1.3) score += 8;
-    } else if (uniqueBuyers > 3) {
-      score += 10;
-    }
-
-    // Maker count rises with volume confirmation
-    const trades30m = overview.trade30m || 0;
-    const vol30m = overview.volume30m || 0;
-    if (trades30m > 20 && vol30m > 5000) score += 10;
+    if (uniqueSellers > 0 && uniqueBuyers / uniqueSellers > 2.0) score += 5;
   }
 
   return clamp(score, 0, 100);
 }
 
 function computeMispricingScore(pair, overview) {
-  let score = 50;
+  let score = 40; // baseline
 
-  if (pair && overview) {
-    // Flow strength vs price response
-    // High volume + many trades but price hasn't moved much = potential edge
-    const vol1h = overview.volume1h || pair.volume1h || 0;
-    const priceChange1h = Math.abs(pair.priceChangeH1 || overview.priceChange1h || 0);
-    const liquidity = pair.liquidityUsd || overview.liquidity || 0;
+  if (!pair) return score;
 
-    if (liquidity > 0 && vol1h > 0) {
-      const volumeToLiqRatio = vol1h / liquidity;
-      if (volumeToLiqRatio > 0.5 && priceChange1h < 50) {
-        score += 20; // High relative volume, moderate price change
-      } else if (volumeToLiqRatio > 0.3 && priceChange1h < 30) {
-        score += 10;
-      }
+  const vol1h = pair.volume1h || 0;
+  const vol24h = pair.volume24h || 0;
+  const liquidity = pair.liquidityUsd || 0;
+  const marketCap = pair.marketCapUsd || 0;
+  const priceChangeH1 = Math.abs(pair.priceChangeH1 || 0);
+
+  // --- Volume/liquidity ratio (market activity vs pool depth) ---
+  // High volume relative to liquidity = active trading, potential opportunity
+  if (liquidity > 0 && vol1h > 0) {
+    const volLiqRatio = vol1h / liquidity;
+    if (volLiqRatio > 0.5 && priceChangeH1 < 100) {
+      score += 18; // High activity, price hasn't moved proportionally
+    } else if (volLiqRatio > 0.2 && priceChangeH1 < 50) {
+      score += 10;
     }
+  }
 
-    // Liquidity depth relative to buy pressure
-    if (liquidity > 100000) score += 10;
-    else if (liquidity > 50000) score += 5;
+  // --- Market cap / liquidity ratio (valuation vs depth) ---
+  // Lower mcap/liq ratio = better liquidity support for the valuation
+  if (liquidity > 0 && marketCap > 0) {
+    const mcapLiqRatio = marketCap / liquidity;
+    if (mcapLiqRatio < 5) score += 12;       // well-supported
+    else if (mcapLiqRatio < 10) score += 6;   // reasonable
+    // > 10 = speculative valuation, no bonus
+  }
+
+  // --- Volume concentration (1h as % of 24h) ---
+  // If a big chunk of 24h volume happened in the last hour = accelerating interest
+  if (vol24h > 0 && vol1h > 0) {
+    const hourPct = vol1h / vol24h;
+    if (hourPct > 0.30) score += 10;    // >30% of daily volume in last hour
+    else if (hourPct > 0.15) score += 5;
+  }
+
+  // --- Liquidity depth bonus ---
+  if (liquidity > 100000) score += 8;
+  else if (liquidity > 50000) score += 4;
+
+  // --- Birdeye bonus: granular volume data (when available) ---
+  if (overview && overview.volume30m > 0 && overview.volume1h > 0) {
+    const accel30m = overview.volume30m / (overview.volume1h / 2);
+    if (accel30m > 1.5) score += 5;
   }
 
   return clamp(score, 0, 100);
@@ -428,54 +436,39 @@ function computeSafetyScore(safety) {
   if (safety.freezeAuthorityInactive) score += 10;
   if (safety.mintAuthorityInactive) score += 10;
 
-  // Improving concentration
+  // Birdeye security bonuses (when available)
   if (safety.top10Pct !== null) {
     if (safety.top10Pct < 20) score += 15;
     else if (safety.top10Pct < 30) score += 10;
     else if (safety.top10Pct < 40) score += 5;
   }
 
-  // Liquidity stability (LP not controlled)
   if (safety.lpControlled === false) score += 10;
-
-  // Slippage acceptable
   if (safety.slippageOk === true) score += 10;
-
-  // No transfer fee
   if (safety.hasTransferFee === false) score += 5;
 
   return clamp(score, 0, 100);
 }
 
 // ---- Anti-FOMO ----
-
-function checkAntiFomo(pair, overview) {
+// Now DexScreener-only. No Birdeye dependency.
+// Threshold raised from 200% to 500% — boosted tokens routinely spike
+// 200-300% and the old threshold rejected all of them.
+function checkAntiFomo(pair) {
   const reasons = [];
 
-  // Price already up > 200% in last hour
   const priceChangeH1 = pair?.priceChangeH1 || 0;
-  if (priceChangeH1 > 200) {
+  if (priceChangeH1 > 500) {
     reasons.push(`Price up ${priceChangeH1.toFixed(0)}% in 1h`);
   }
 
-  // Volume rising but holder count flat/down
-  if (overview) {
-    const vol1h = overview.volume1h || 0;
-    const holderCount = overview.holderCount || 0;
-    // If high volume but low holder count for the volume
-    if (vol1h > 50000 && holderCount < 150) {
-      reasons.push(`High volume ($${vol1h.toFixed(0)}) but only ${holderCount} holders`);
-    }
-  }
-
-  // Buy/sell ratio high but maker count flat
-  if (pair && overview) {
-    const buys1h = pair.txnsBuys1h || 0;
-    const sells1h = pair.txnsSells1h || 0;
-    const trades30m = overview.trade30m || 0;
-    if (sells1h > 0 && buys1h / sells1h > 3 && trades30m < 10) {
-      reasons.push('High buy/sell ratio but low unique trade count');
-    }
+  // Extreme sell pressure (more sells than buys in 5m while 1h is buy-heavy)
+  // = likely distribution phase after a pump
+  const buys5m = pair?.txnsBuys5m || 0;
+  const sells5m = pair?.txnsSells5m || 0;
+  const buys1h = pair?.txnsBuys1h || 0;
+  if (sells5m > buys5m * 2 && buys1h > 50) {
+    reasons.push(`Sell pressure spike: ${sells5m} sells vs ${buys5m} buys in 5m`);
   }
 
   return {
