@@ -47,35 +47,6 @@ function start() {
     rankInterval = setInterval(runRankTick, 90000);
   }, 30000);
 
-  // FORCE TEST: 60s after start, directly check scanner + ranker
-  // and send result to Telegram regardless of any other code path
-  setTimeout(async () => {
-    try {
-      const mapSize = scanner.getCandidateMap().size;
-      telegram.sendAlert(
-        `🧪 FORCE TEST (t+60s): scanner Map has ${mapSize} candidates, mode=${config.tradingMode}, running=${running}`
-      ).catch(() => {});
-      if (mapSize > 0) {
-        const ranked = await ranker.rank(scanner.getCandidateMap());
-        const eligible = ranked.filter(r => r.buyEligible);
-        telegram.sendAlert(
-          `🧪 FORCE RANK: ${ranked.length} scored, ${eligible.length} eligible` +
-          (eligible.length > 0 ? `\nTop: ${eligible[0].symbol} ${eligible[0].totalScore.toFixed(1)}` : '') +
-          (ranked.length > 0 && eligible.length === 0 ? `\nTop: ${ranked[0].symbol} ${ranked[0].totalScore.toFixed(1)} elig=${ranked[0].buyEligible} safe=${ranked[0].safetyGatePassed} fomo=${ranked[0].antiFomoRejected}` : '')
-        ).catch(() => {});
-        // If eligible, try buying the top one
-        if (eligible.length > 0) {
-          const result = await executor.tryBuy(eligible[0]);
-          telegram.sendAlert(
-            `🧪 FORCE BUY: ${eligible[0].symbol} → bought=${result.bought} reasons=${(result.reasons||[]).join(', ')}`
-          ).catch(() => {});
-        }
-      }
-    } catch (err) {
-      telegram.sendAlert(`🧪 FORCE TEST FAILED: ${err.message}`).catch(() => {});
-    }
-  }, 60000);
-
   // Position monitor: every 30s (only in paper/live modes)
   if (config.tradingMode !== 'scanner') {
     monitorInterval = setInterval(runMonitorTick, 30000);

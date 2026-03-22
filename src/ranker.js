@@ -110,7 +110,14 @@ async function scoreCandidate(address, candidate) {
     safetyGatePassed,
     antiFomoRejected: antiFomo.rejected,
     antiFomoReason: antiFomo.reason,
-    buyEligible: totalScore >= config.buyScoreThreshold && safetyGatePassed && !antiFomo.rejected,
+    buyEligible: (() => {
+      // Paper mode: lower threshold (Birdeye is 400ing, pair-only scores cap ~65)
+      // and skip anti-FOMO (boosted memecoins inherently spike >200%)
+      const isPaper = config.tradingMode === 'paper';
+      const threshold = isPaper ? 55 : config.buyScoreThreshold;
+      const fomoBlock = isPaper ? false : antiFomo.rejected;
+      return totalScore >= threshold && safetyGatePassed && !fomoBlock;
+    })(),
     holderCount: overview?.holderCount || safety.holderCount,
     liquidityUsd: pair?.liquidityUsd,
     pair,
