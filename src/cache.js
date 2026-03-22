@@ -97,8 +97,8 @@ class Cache {
 // TTL constants in milliseconds
 const TTL = {
   AUTHORITY_CHECK: 10 * 60 * 1000,   // 10 min
-  TOP_HOLDERS: 3 * 60 * 1000,         // 3 min
-  HOLDER_COUNT: 2 * 60 * 1000,        // 2 min
+  TOP_HOLDERS: 10 * 60 * 1000,        // 10 min
+  HOLDER_COUNT: 5 * 60 * 1000,        // 5 min
   SLIPPAGE: 30 * 1000,                // 30 sec
   TOKEN_METADATA: 10 * 60 * 1000,     // 10 min
   MARKET_DATA: 60 * 1000,             // 1 min
