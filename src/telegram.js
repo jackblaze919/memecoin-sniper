@@ -32,6 +32,7 @@ function registerCommands() {
   bot.onText(/\/health/, handleHealth);
   bot.onText(/\/candidates/, handleCandidates);
   bot.onText(/\/skips/, handleSkips);
+  bot.onText(/\/risk/, handleRisk);
   bot.onText(/\/report/, handleReport);
 
   bot.on('polling_error', (err) => {
@@ -301,6 +302,56 @@ async function handleReport(msg) {
   } catch (err) {
     logger.error({ err }, '/report command failed');
     await reply(msg.chat.id, `❌ Report failed: ${err.message}`);
+  }
+}
+
+async function handleRisk(msg) {
+  if (!isAuthorized(msg)) return;
+  try {
+    const stats = require('./models/stats');
+    const positionModel = require('./models/position');
+
+    const pausedUntil = await stats.getState('paused_until');
+    const dailyLoss = await stats.getState('daily_loss_total');
+    const consecutiveLosses = await stats.getState('consecutive_losses');
+    const lastTradeAt = await stats.getState('last_trade_at');
+    const lastReset = await stats.getState('last_daily_reset');
+    const openCount = await positionModel.getOpenCount();
+    const tradesLastHour = await positionModel.getTradesInLastHour();
+
+    const lines = [
+      '🛡️ Risk State:',
+      `Daily loss: ${dailyLoss ?? '0'} / -${config.dailyLossLimitSol} SOL limit`,
+      `Consecutive losses: ${consecutiveLosses ?? '0'}`,
+      `Trades last hour: ${tradesLastHour} / ${config.maxTradesPerHour} max`,
+      `Open positions: ${openCount} / ${config.getMaxConcurrentPositions()} max`,
+      `Last trade: ${lastTradeAt || 'never'}`,
+      `Paused until: ${pausedUntil || 'not paused'}`,
+      `Last daily reset: ${lastReset || 'never'}`,
+    ];
+
+    // Flag what would block
+    const blockers = [];
+    if (dailyLoss && Math.abs(parseFloat(dailyLoss)) >= config.dailyLossLimitSol)
+      blockers.push(`⛔ Daily loss limit hit`);
+    if (parseInt(consecutiveLosses) >= 5)
+      blockers.push(`⛔ 5+ consecutive losses — 1h pause`);
+    if (tradesLastHour >= config.maxTradesPerHour)
+      blockers.push(`⛔ Max trades/hour reached`);
+    if (openCount >= config.getMaxConcurrentPositions())
+      blockers.push(`⛔ Max concurrent positions reached`);
+    if (pausedUntil && new Date(pausedUntil) > new Date())
+      blockers.push(`⛔ Bot paused until ${pausedUntil}`);
+
+    if (blockers.length > 0) {
+      lines.push('', '── BLOCKING ──', ...blockers);
+    } else {
+      lines.push('', '✅ No blockers — trades allowed');
+    }
+
+    await reply(msg.chat.id, lines.join('\n'));
+  } catch (err) {
+    await reply(msg.chat.id, `Error: ${err.message}`);
   }
 }
 

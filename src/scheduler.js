@@ -126,13 +126,18 @@ async function runRankTick() {
     for (const candidate of eligible) {
       if (!running) break;
 
-      const result = await executor.tryBuy(candidate);
-      if (result.bought) {
-        logger.info({ address: candidate.address, symbol: candidate.symbol }, 'Buy executed');
-        await sleep(2000);
-      } else {
-        logger.info({ address: candidate.address, symbol: candidate.symbol, reasons: result.reasons }, 'Buy attempt rejected');
-        recordSkip({ symbol: candidate.symbol, score: candidate.totalScore.toFixed(1), reasons: result.reasons });
+      try {
+        const result = await executor.tryBuy(candidate);
+        if (result.bought) {
+          logger.info({ address: candidate.address, symbol: candidate.symbol }, 'Buy executed');
+          await sleep(2000);
+        } else {
+          logger.info({ address: candidate.address, symbol: candidate.symbol, reasons: result.reasons }, 'Buy attempt rejected');
+          recordSkip({ symbol: candidate.symbol, score: candidate.totalScore.toFixed(1), reasons: result.reasons });
+        }
+      } catch (err) {
+        logger.error({ err, address: candidate.address, symbol: candidate.symbol }, 'Buy attempt threw — continuing to next candidate');
+        recordSkip({ symbol: candidate.symbol, score: candidate.totalScore.toFixed(1), reasons: [`exception: ${err.message}`] });
       }
     }
   } catch (err) {
@@ -158,19 +163,34 @@ async function runReconcileTick() {
   }
 }
 
-// Track which UTC date we last ran reset for. Compare dates, not clock times,
-// so we never miss reset due to setInterval drift.
+// Track which UTC date we last ran reset for. Uses a DURABLE DB marker
+// so stale risk state from previous days is always cleaned on startup,
+// even if the bot restarts mid-day.
 let lastResetDate = null;
 async function checkDailyReset() {
   const utcDate = new Date().toISOString().slice(0, 10);
+
   if (lastResetDate === null) {
-    // First check after startup — record current date, don't reset mid-day
+    // First check after startup — read the last reset date from DB.
+    // If it's before today, reset now. If it's today, skip (already done).
+    const stats = require('./models/stats');
+    const dbResetDate = await stats.getState('last_daily_reset');
+    if (dbResetDate !== utcDate) {
+      logger.info({ dbResetDate, utcDate }, 'Daily reset: stale risk state detected, resetting now');
+      await risk.resetDaily();
+      await stats.setState('last_daily_reset', utcDate);
+    } else {
+      logger.debug('Daily reset: already done for today');
+    }
     lastResetDate = utcDate;
     return;
   }
+
   if (utcDate !== lastResetDate) {
     lastResetDate = utcDate;
+    const stats = require('./models/stats');
     await risk.resetDaily();
+    await stats.setState('last_daily_reset', utcDate);
   }
 }
 
