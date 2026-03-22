@@ -12,8 +12,9 @@ const app = express();
 app.use(express.json());
 
 // Health endpoint — must respond fast for Railway's health probe.
-// health.runAll() can take 60+ seconds if APIs are rate-limited.
-// Use a 10s timeout: if health checks hang, return last-known status.
+// CRITICAL: In paper/scanner mode, ALWAYS return 200 to prevent
+// Railway from killing the process. API outages are transient and
+// the scheduler has its own error handling.
 let lastHealthResult = { healthy: true, note: 'initial' };
 app.get('/health', async (req, res) => {
   try {
@@ -23,16 +24,15 @@ app.get('/health', async (req, res) => {
     const result = await Promise.race([health.runAll(), timeout]);
     if (result) {
       lastHealthResult = result;
-      res.status(result.healthy ? 200 : 503).json(result);
-    } else {
-      // Health checks timed out — return last-known status
-      res.status(lastHealthResult.healthy ? 200 : 503).json({
-        ...lastHealthResult,
-        note: 'Health check timed out — returning cached result',
-      });
     }
+    const payload = result || { ...lastHealthResult, note: 'Health check timed out' };
+    // Paper/scanner mode: always 200 so Railway doesn't restart us
+    const httpStatus = config.isLiveMode() ? (payload.healthy ? 200 : 503) : 200;
+    res.status(httpStatus).json(payload);
   } catch (err) {
-    res.status(500).json({ healthy: false, error: err.message });
+    // Even on error, return 200 in non-live mode
+    const httpStatus = config.isLiveMode() ? 500 : 200;
+    res.status(httpStatus).json({ healthy: false, error: err.message, mode: config.tradingMode });
   }
 });
 
@@ -77,11 +77,21 @@ async function startup() {
       .filter(([name, c]) => !c.ok && healthResult.required.includes(name))
       .map(([name, c]) => `${name}: ${c.error || c.note}`);
 
-    logger.fatal({ failedRequired }, 'Required health checks failed');
-    await telegram.sendAlert(
-      `❌ Required health checks failed:\n${failedRequired.join('\n')}`
-    ).catch(() => {});
-    process.exit(1);
+    if (config.isLiveMode()) {
+      // Live mode: fail-closed — do not start with broken dependencies
+      logger.fatal({ failedRequired }, 'Required health checks failed — exiting (live mode)');
+      await telegram.sendAlert(
+        `❌ Required health checks failed:\n${failedRequired.join('\n')}`
+      ).catch(() => {});
+      process.exit(1);
+    } else {
+      // Paper/scanner mode: warn and continue — the scheduler has its own
+      // error handling. Crashing here causes Railway restart loops.
+      logger.error({ failedRequired }, 'Required health checks failed — continuing anyway (non-live mode)');
+      await telegram.sendAlert(
+        `⚠️ Health checks failed but continuing in ${config.tradingMode} mode:\n${failedRequired.join('\n')}`
+      ).catch(() => {});
+    }
   } else {
     // Log non-required checks that failed (informational)
     const optionalFailed = Object.entries(healthResult.checks)
@@ -135,6 +145,12 @@ async function shutdown(signal) {
   logger.info('Shutdown complete');
   process.exit(0);
 }
+
+process.on('exit', (code) => {
+  // This fires synchronously just before the process exits.
+  // Cannot do async work here, but can log.
+  console.log(`PROCESS EXIT code=${code} uptime=${process.uptime().toFixed(0)}s`);
+});
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
