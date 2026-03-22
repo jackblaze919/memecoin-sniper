@@ -272,9 +272,10 @@ async function handleCandidates(msg) {
         text += `${c.symbol || '?'} | Liq: ${formatUsd(c.liquidity_usd)} | `;
         text += `MCap: ${formatUsd(c.market_cap_usd)}\n`;
       } else {
-        text += `${c.symbol || '?'} | Score: ${(c.total_score || 0).toFixed(1)} | `;
-        text += `Liq: ${formatUsd(c.liquidity_usd)} | `;
-        text += `${c.safety_gate_passed ? '✅' : '❌'} safe`;
+        const ds = c.data || {};
+        text += `${c.symbol || '?'} ${(c.total_score || 0).toFixed(1)}`;
+        text += ` [D:${(ds.discoveryScore||0).toFixed(0)} F:${(ds.flowScore||0).toFixed(0)} M:${(ds.mispricingScore||0).toFixed(0)} S:${(ds.safetyScore||0).toFixed(0)}]`;
+        text += ` | ${c.safety_gate_passed ? '✅' : '❌'}`;
         // Show anti-FOMO status — this was previously hidden
         if (c.anti_fomo_rejected) {
           text += ` | 🚫 FOMO: ${c.anti_fomo_reason || 'rejected'}`;

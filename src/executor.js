@@ -34,7 +34,7 @@ async function releaseExitLock(positionId, lockType) {
 // ---- Entry ----
 
 async function tryBuy(candidate) {
-  const { address, symbol, totalScore, pair, overview, safety } = candidate;
+  const { address, symbol, totalScore, discoveryScore, flowScore, mispricingScore, safetyScore, pair, overview, safety } = candidate;
 
   logger.info({
     address,
@@ -65,7 +65,7 @@ async function tryBuy(candidate) {
     const lamports = Math.floor(positionSol * 1e9);
 
     if (config.tradingMode === 'paper') {
-      return await executePaperBuy(address, symbol, totalScore, lamports, positionSol, pair, overview);
+      return await executePaperBuy(address, symbol, totalScore, lamports, positionSol, pair, overview, { discoveryScore, flowScore, mispricingScore, safetyScore });
     }
 
     if (config.tradingMode === 'tiny_live' || config.tradingMode === 'live') {
@@ -80,7 +80,7 @@ async function tryBuy(candidate) {
   }
 }
 
-async function executePaperBuy(address, symbol, score, lamports, positionSol, pair, overview) {
+async function executePaperBuy(address, symbol, score, lamports, positionSol, pair, overview, breakdown = {}) {
   // Get live quote for paper simulation
   let quote;
   try {
@@ -141,10 +141,10 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
   const ageMin = pair?.pairCreatedAt ? minutesAgo(pair.pairCreatedAt) : null;
   await telegram.sendAlert(
     `📝 PAPER BUY: ${symbol}\n` +
-    `Score: ${score.toFixed(1)} | Impact: ${quote.priceImpactPct.toFixed(2)}%\n` +
-    `Price: $${entryPrice.toFixed(8)}\n` +
+    `Score: ${score.toFixed(1)} [D:${(breakdown.discoveryScore||0).toFixed(0)} F:${(breakdown.flowScore||0).toFixed(0)} M:${(breakdown.mispricingScore||0).toFixed(0)} S:${(breakdown.safetyScore||0).toFixed(0)}]\n` +
+    `Price: $${entryPrice.toFixed(8)} | Impact: ${quote.priceImpactPct.toFixed(2)}%\n` +
     `Amount: ${formatSol(positionSol)} SOL → ${tokensReceived.toLocaleString()} tokens\n` +
-    `Liq: ${formatUsd(pair?.liquidityUsd || 0)} | Holders: ${overview?.holderCount ?? '?'}\n` +
+    `Liq: ${formatUsd(pair?.liquidityUsd || 0)} | MCap: ${formatUsd(pair?.marketCapUsd || 0)}\n` +
     (ageMin ? `Age: ${ageMin < 60 ? ageMin.toFixed(0) + 'm' : (ageMin / 60).toFixed(1) + 'h'}\n` : '') +
     `${truncateAddress(address)}`
   );
