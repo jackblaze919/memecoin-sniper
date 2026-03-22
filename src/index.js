@@ -11,11 +11,26 @@ const { cache } = require('./cache');
 const app = express();
 app.use(express.json());
 
-// Health endpoint
+// Health endpoint — must respond fast for Railway's health probe.
+// health.runAll() can take 60+ seconds if APIs are rate-limited.
+// Use a 10s timeout: if health checks hang, return last-known status.
+let lastHealthResult = { healthy: true, note: 'initial' };
 app.get('/health', async (req, res) => {
   try {
-    const result = await health.runAll();
-    res.status(result.healthy ? 200 : 503).json(result);
+    const timeout = new Promise((resolve) =>
+      setTimeout(() => resolve(null), 10000)
+    );
+    const result = await Promise.race([health.runAll(), timeout]);
+    if (result) {
+      lastHealthResult = result;
+      res.status(result.healthy ? 200 : 503).json(result);
+    } else {
+      // Health checks timed out — return last-known status
+      res.status(lastHealthResult.healthy ? 200 : 503).json({
+        ...lastHealthResult,
+        note: 'Health check timed out — returning cached result',
+      });
+    }
   } catch (err) {
     res.status(500).json({ healthy: false, error: err.message });
   }
@@ -124,11 +139,14 @@ async function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('uncaughtException', (err) => {
-  logger.fatal({ err }, 'Uncaught exception');
-  shutdown('uncaughtException');
+  // Log but do NOT exit. The bot should try to self-heal.
+  // Previous behavior called shutdown() → process.exit(0), causing
+  // Railway to restart the bot on every transient error (Telegram
+  // polling hiccup, DB connection drop, etc.).
+  logger.fatal({ err: err.message, stack: err.stack }, 'Uncaught exception (continuing)');
 });
 process.on('unhandledRejection', (err) => {
-  logger.error({ err }, 'Unhandled rejection');
+  logger.error({ err: err?.message || err, stack: err?.stack }, 'Unhandled rejection');
 });
 
 startup().catch((err) => {

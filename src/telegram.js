@@ -38,6 +38,12 @@ function registerCommands() {
   bot.on('polling_error', (err) => {
     logger.error({ err: err.message }, 'Telegram polling error');
   });
+
+  // CRITICAL: without this handler, any non-polling error from the bot
+  // becomes an uncaught EventEmitter 'error' → uncaughtException → process.exit.
+  bot.on('error', (err) => {
+    logger.error({ err: err.message }, 'Telegram bot error');
+  });
 }
 
 function isAuthorized(msg) {
