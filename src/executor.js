@@ -9,7 +9,7 @@ const positionModel = require('./models/position');
 const statsModel = require('./models/stats');
 const telegram = require('./telegram');
 const { cache, TTL } = require('./cache');
-const { formatSol, formatPct, safeNumber, truncateAddress, minutesAgo, pctChange } = require('./utils');
+const { formatSol, formatPct, formatUsd, safeNumber, truncateAddress, minutesAgo, pctChange } = require('./utils');
 
 // DB-backed exit lock helpers — survive crash/restart unlike the old in-memory Set.
 const db = require('./db');

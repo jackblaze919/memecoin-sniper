@@ -265,10 +265,16 @@ async function runSafetyGate(address) {
 }
 
 function evaluateSafetyGate(g) {
-  // Required data: authority check (Helius) and overview (Birdeye overview).
-  // Security endpoint (Birdeye /defi/token_security) requires paid tier —
-  // treat as optional. If missing, skip those checks but don't auto-fail.
-  const requiredMissing = g.missingData.filter((d) => d !== 'security');
+  // Required data: authority check (Helius) — must always be verified.
+  // Optional data (skip if missing, don't auto-fail):
+  //   - 'security': Birdeye token_security requires paid tier
+  //   - 'overview':  Birdeye token_overview may be degraded/stale;
+  //                  holderCount check at line below handles null gracefully
+  //   - 'slippage': Jupiter quote may be temporarily unavailable
+  // Only 'authority' is a hard requirement — without it we can't verify
+  // freeze/mint authority, which is the most critical safety check.
+  const OPTIONAL_DATA = new Set(['security', 'overview', 'slippage']);
+  const requiredMissing = g.missingData.filter((d) => !OPTIONAL_DATA.has(d));
   if (requiredMissing.length > 0) return false;
 
   // Freeze authority must be inactive (null = no authority = safe)
