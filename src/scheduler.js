@@ -104,27 +104,47 @@ async function runRankTick() {
     const ranked = await ranker.rank(candidateMap);
     const eligible = ranked.filter((r) => r.buyEligible);
     const ineligible = ranked.filter((r) => !r.buyEligible && r.totalScore >= config.buyScoreThreshold);
-
-    // DIAGNOSTIC: log every ranked candidate's eligibility breakdown
-    for (const c of ranked) {
-      if (c.totalScore >= 60) {
-        logger.info({
-          symbol: c.symbol,
-          score: c.totalScore.toFixed(1),
-          safetyGate: c.safetyGatePassed,
-          antiFomo: c.antiFomoRejected ? c.antiFomoReason : false,
-          buyEligible: c.buyEligible,
-          threshold: config.buyScoreThreshold,
-        }, 'DIAG:ranked');
-      }
-    }
+    const aboveThreshold = ranked.filter((r) => r.totalScore >= config.buyScoreThreshold).length;
 
     logger.info({
+      candidates: candidateMap.size,
       ranked: ranked.length,
       buyEligible: eligible.length,
       ineligible: ineligible.length,
-      aboveThreshold: ranked.filter((r) => r.totalScore >= config.buyScoreThreshold).length,
+      aboveThreshold,
+      threshold: config.buyScoreThreshold,
     }, 'Rank tick complete');
+
+    // PIPELINE STUCK ALERT — fires once when candidates exist but
+    // ranker returns 0 results (likely scoreCandidate is throwing)
+    // or when high scores exist but 0 eligible (hidden blocker).
+    if (!runRankTick._alertSent) {
+      const top3 = ranked.slice(0, 3).map(c => ({
+        s: c.symbol, sc: c.totalScore?.toFixed(1),
+        safe: c.safetyGatePassed, fomo: c.antiFomoRejected,
+        elig: c.buyEligible,
+      }));
+      if (candidateMap.size > 0 && ranked.length === 0) {
+        await telegram.sendAlert(
+          `🔍 PIPELINE DIAG: ${candidateMap.size} candidates but ranker returned 0 results.\n` +
+          `scoreCandidate is likely throwing for every candidate. Check logs for "Ranker error".`
+        );
+        runRankTick._alertSent = true;
+      } else if (aboveThreshold > 0 && eligible.length === 0) {
+        await telegram.sendAlert(
+          `🔍 PIPELINE DIAG: ${aboveThreshold} above threshold ${config.buyScoreThreshold} but 0 eligible.\n` +
+          `Top 3: ${top3.map(c => `${c.s}:${c.sc} safe=${c.safe} fomo=${c.fomo} elig=${c.elig}`).join(' | ')}`
+        );
+        runRankTick._alertSent = true;
+      } else if (eligible.length > 0) {
+        await telegram.sendAlert(
+          `🔍 PIPELINE DIAG: ${eligible.length} eligible for buy.\n` +
+          `Top 3: ${top3.map(c => `${c.s}:${c.sc} elig=${c.elig}`).join(' | ')}\n` +
+          `Entering executor loop now...`
+        );
+        runRankTick._alertSent = true;
+      }
+    }
 
     // Log + record why high-score candidates were NOT eligible
     for (const c of ineligible) {

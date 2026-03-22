@@ -11,13 +11,18 @@ const { safeNumber, pctChange, clamp } = require('./utils');
 // Run ranker on all current candidates
 async function rank(candidateMap) {
   const results = [];
+  let errors = 0;
   for (const [address, candidate] of candidateMap) {
     try {
       const result = await scoreCandidate(address, candidate);
       results.push(result);
     } catch (err) {
-      logger.error({ err, address }, 'Ranker error for candidate');
+      errors++;
+      logger.error({ err: err.message, address, symbol: candidate?.pair?.symbol }, 'Ranker error for candidate');
     }
+  }
+  if (errors > 0) {
+    logger.warn({ errors, total: candidateMap.size, scored: results.length }, 'Ranker had scoring errors');
   }
   // Sort by total score descending
   results.sort((a, b) => b.totalScore - a.totalScore);
