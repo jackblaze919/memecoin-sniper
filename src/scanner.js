@@ -14,11 +14,27 @@ async function scan() {
   logger.info({ candidateCount: candidates.size }, 'Scanner tick starting');
 
   try {
-    // Stage 1: Discover new tokens from DexScreener
-    const profiles = await dexscreener.getLatestTokenProfiles();
-    let newCount = 0;
+    // Stage 1: Discover new tokens from DexScreener (two sources)
+    const [profiles, boosted] = await Promise.all([
+      dexscreener.getLatestTokenProfiles(),
+      dexscreener.getLatestBoostedTokens(),
+    ]);
 
-    for (const profile of profiles) {
+    // Merge and deduplicate by address
+    const seen = new Set();
+    const allProfiles = [];
+    for (const p of [...profiles, ...boosted]) {
+      if (p.address && !seen.has(p.address)) {
+        seen.add(p.address);
+        allProfiles.push(p);
+      }
+    }
+
+    let newCount = 0;
+    let skippedNoPairs = 0;
+    let skippedFilter = 0;
+
+    for (const profile of allProfiles) {
       if (!profile.address) continue;
       if (candidates.has(profile.address)) continue;
 
@@ -32,14 +48,32 @@ async function scan() {
         }
       }
 
-      if (!pairs || pairs.length === 0) continue;
+      if (!pairs || pairs.length === 0) {
+        skippedNoPairs++;
+        continue;
+      }
 
       // Use highest liquidity pair
       const pair = pairs.sort((a, b) => b.liquidityUsd - a.liquidityUsd)[0];
       if (!pair) continue;
 
       // Apply inclusion filters
-      if (!passesInclusionFilter(pair)) continue;
+      const filterResult = checkInclusionFilter(pair);
+      if (!filterResult.passed) {
+        skippedFilter++;
+        // Log first few rejections per tick for diagnostics
+        if (skippedFilter <= 3) {
+          logger.debug({
+            address: profile.address,
+            symbol: pair.symbol,
+            reason: filterResult.reason,
+            liquidity: pair.liquidityUsd,
+            marketCap: pair.marketCapUsd,
+            source: profile.source || 'profiles',
+          }, 'Candidate rejected by inclusion filter');
+        }
+        continue;
+      }
 
       candidates.set(profile.address, {
         address: profile.address,
@@ -50,9 +84,14 @@ async function scan() {
       newCount++;
     }
 
-    if (newCount > 0) {
-      logger.info({ newCount }, 'New candidates discovered');
-    }
+    logger.info({
+      profileCount: profiles.length,
+      boostedCount: boosted.length,
+      merged: allProfiles.length,
+      newCandidates: newCount,
+      skippedNoPairs,
+      skippedFilter,
+    }, 'Discovery complete');
 
     // Refresh existing candidates
     await refreshCandidates();
@@ -72,25 +111,34 @@ async function scan() {
   return getCandidateList();
 }
 
-function passesInclusionFilter(pair) {
-  if (!pair.pairCreatedAt) return false;
+/**
+ * Check inclusion filter and return { passed, reason }.
+ * Reason is a short string explaining why the token was rejected.
+ */
+function checkInclusionFilter(pair) {
+  if (!pair.pairCreatedAt) return { passed: false, reason: 'no_created_at' };
 
   const ageMinutes = minutesAgo(pair.pairCreatedAt);
 
-  // Too young
-  if (ageMinutes < config.minTokenAgeMinutes) return false;
+  if (ageMinutes < config.minTokenAgeMinutes)
+    return { passed: false, reason: `too_young: ${ageMinutes.toFixed(0)}m < ${config.minTokenAgeMinutes}m` };
 
-  // Liquidity floor
-  if (pair.liquidityUsd < config.minLiquidityUsd) return false;
+  if (pair.liquidityUsd < config.minLiquidityUsd)
+    return { passed: false, reason: `low_liq: $${pair.liquidityUsd.toFixed(0)} < $${config.minLiquidityUsd}` };
 
-  // Market cap floor
-  if (pair.marketCapUsd < 50000) return false;
+  if (pair.marketCapUsd < 50000)
+    return { passed: false, reason: `low_mcap: $${pair.marketCapUsd.toFixed(0)} < $50k` };
 
-  // Preferred age < 24h, allow up to 72h for re-acceleration
   const ageHours = ageMinutes / 60;
-  if (ageHours > 72) return false;
+  if (ageHours > 72)
+    return { passed: false, reason: `too_old: ${ageHours.toFixed(0)}h > 72h` };
 
-  return true;
+  return { passed: true, reason: null };
+}
+
+// Backward-compatible wrapper used by refreshCandidates
+function passesInclusionFilter(pair) {
+  return checkInclusionFilter(pair).passed;
 }
 
 async function refreshCandidates() {

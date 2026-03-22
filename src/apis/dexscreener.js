@@ -50,6 +50,27 @@ async function getTokenPairs(tokenAddress) {
   }
 }
 
+// GET /token-boosts/latest/v1 — recently boosted tokens (higher activity)
+async function getLatestBoostedTokens() {
+  try {
+    const data = await request('/token-boosts/latest/v1', 'boostedTokens');
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((t) => t.chainId === 'solana' && t.tokenAddress)
+      .map((t) => ({
+        address: t.tokenAddress,
+        chainId: t.chainId,
+        description: t.description || null,
+        icon: t.icon || null,
+        links: t.links || [],
+        source: 'boosted',
+      }));
+  } catch (err) {
+    logger.error({ err }, 'DexScreener getLatestBoostedTokens failed');
+    return [];
+  }
+}
+
 // GET /latest/dex/pairs/solana/{pairAddress}
 async function getPairByAddress(pairAddress) {
   try {
@@ -116,6 +137,7 @@ function normalizePair(pair) {
 
 module.exports = {
   getLatestTokenProfiles,
+  getLatestBoostedTokens,
   getTokenPairs,
   getPairByAddress,
   search,
