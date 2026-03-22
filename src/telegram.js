@@ -269,6 +269,10 @@ async function handleCandidates(msg) {
         text += `${c.symbol || '?'} | Score: ${(c.total_score || 0).toFixed(1)} | `;
         text += `Liq: ${formatUsd(c.liquidity_usd)} | `;
         text += `${c.safety_gate_passed ? '✅' : '❌'} safe`;
+        // Show anti-FOMO status — this was previously hidden
+        if (c.anti_fomo_rejected) {
+          text += ` | 🚫 FOMO: ${c.anti_fomo_reason || 'rejected'}`;
+        }
         // Show why safety gate failed
         if (!c.safety_gate_passed && c.data?.safetyDetails) {
           const s = c.data.safetyDetails;

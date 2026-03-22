@@ -104,7 +104,27 @@ async function runRankTick() {
     const ranked = await ranker.rank(candidateMap);
     const eligible = ranked.filter((r) => r.buyEligible);
     const ineligible = ranked.filter((r) => !r.buyEligible && r.totalScore >= config.buyScoreThreshold);
-    logger.info({ ranked: ranked.length, buyEligible: eligible.length }, 'Rank tick complete');
+
+    // DIAGNOSTIC: log every ranked candidate's eligibility breakdown
+    for (const c of ranked) {
+      if (c.totalScore >= 60) {
+        logger.info({
+          symbol: c.symbol,
+          score: c.totalScore.toFixed(1),
+          safetyGate: c.safetyGatePassed,
+          antiFomo: c.antiFomoRejected ? c.antiFomoReason : false,
+          buyEligible: c.buyEligible,
+          threshold: config.buyScoreThreshold,
+        }, 'DIAG:ranked');
+      }
+    }
+
+    logger.info({
+      ranked: ranked.length,
+      buyEligible: eligible.length,
+      ineligible: ineligible.length,
+      aboveThreshold: ranked.filter((r) => r.totalScore >= config.buyScoreThreshold).length,
+    }, 'Rank tick complete');
 
     // Log + record why high-score candidates were NOT eligible
     for (const c of ineligible) {
