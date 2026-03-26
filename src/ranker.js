@@ -1,3 +1,4 @@
+const { PublicKey } = require('@solana/web3.js');
 const config = require('./config');
 const logger = require('./logger');
 const birdeye = require('./apis/birdeye');
@@ -7,6 +8,10 @@ const tokenModel = require('./models/token');
 const stats = require('./models/stats');
 const { cache, TTL } = require('./cache');
 const { safeNumber, pctChange, clamp, minutesAgo } = require('./utils');
+
+// Well-known program IDs for LP/pool account filtering
+const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+const ATA_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
 
 // Run ranker on all current candidates
 async function rank(candidateMap) {
@@ -33,7 +38,7 @@ async function scoreCandidate(address, candidate) {
   const pair = candidate.pair;
 
   // -- Pre-scoring safety gate --
-  const safety = await runSafetyGate(address);
+  const safety = await runSafetyGate(address, pair?.pairAddress);
   const safetyGatePassed = safety.passed;
 
   // -- Birdeye overview (optional enrichment, NOT required for scoring) --
@@ -139,12 +144,13 @@ async function scoreCandidate(address, candidate) {
 
 // ---- Safety Gate ----
 
-async function runSafetyGate(address) {
+async function runSafetyGate(address, pairAddress) {
   const result = {
     passed: false,
     freezeAuthorityInactive: null,
     mintAuthorityInactive: null,
     top10Pct: null,
+    onChainTop10Pct: null,
     holderCount: null,
     lpControlled: null,
     slippageOk: null,
@@ -170,6 +176,74 @@ async function runSafetyGate(address) {
   } else {
     result.freezeAuthorityInactive = authInfo.freezeAuthority === null;
     result.mintAuthorityInactive = authInfo.mintAuthority === null;
+  }
+
+  // 1b. On-chain holder concentration via getTokenLargestAccounts (Helius RPC).
+  // Backstop for Birdeye top10HolderPercent — works even when Birdeye is degraded.
+  const holderConcKey = `holder_conc:${address}`;
+  let holderConc = cache.get(holderConcKey);
+  if (holderConc === null) {
+    try {
+      const largestAccounts = await helius.getTokenLargestAccounts(address);
+      if (largestAccounts && authInfo.parsed && authInfo.supply) {
+        const totalSupply = BigInt(authInfo.supply); // raw units (string → BigInt)
+        if (totalSupply > 0n) {
+          // Derive LP/pool ATA to exclude from concentration calc
+          let poolAta = null;
+          let poolExcluded = false;
+          if (pairAddress) {
+            try {
+              const [ata] = PublicKey.findProgramAddressSync(
+                [
+                  new PublicKey(pairAddress).toBuffer(),
+                  TOKEN_PROGRAM_ID.toBuffer(),
+                  new PublicKey(address).toBuffer(),
+                ],
+                ATA_PROGRAM_ID,
+              );
+              poolAta = ata.toBase58();
+            } catch (e) {
+              // Invalid pair address — skip filtering, result is conservative
+            }
+          }
+
+          // Filter out LP/pool account, then take top 10
+          const filtered = largestAccounts.filter((a) => {
+            if (poolAta && a.address === poolAta) {
+              poolExcluded = true;
+              return false;
+            }
+            return true;
+          });
+          const top10 = filtered.slice(0, 10);
+          // Sum raw amounts (string → BigInt) for unit consistency with totalSupply
+          const top10Amount = top10.reduce((sum, a) => sum + BigInt(a.amount || '0'), 0n);
+          const pct = Number((top10Amount * 10000n) / totalSupply) / 100; // two-decimal %
+
+          holderConc = { top10Pct: pct, poolExcluded, accountsChecked: largestAccounts.length };
+          logger.info({
+            address,
+            onChainTop10Pct: pct.toFixed(1),
+            poolExcluded,
+            poolAta: poolAta || 'none',
+            accountsChecked: largestAccounts.length,
+          }, 'Holder concentration computed');
+        } else {
+          holderConc = { _negativeCached: true };
+        }
+      } else {
+        holderConc = { _negativeCached: true };
+      }
+      cache.set(holderConcKey, holderConc, TTL.TOP_HOLDERS);
+    } catch (err) {
+      logger.warn({ err, address }, 'Holder concentration check failed');
+      holderConc = { _negativeCached: true };
+      cache.set(holderConcKey, holderConc, TTL.TOP_HOLDERS);
+    }
+  }
+
+  if (holderConc && !holderConc._negativeCached) {
+    result.onChainTop10Pct = holderConc.top10Pct;
   }
 
   // 2. Birdeye security (optional — paid tier only, negative-cached)
@@ -264,6 +338,7 @@ function evaluateSafetyGate(g) {
   if (g.freezeAuthorityInactive === false) return false;
   if (g.mintAuthorityInactive === false) return false;
   if (g.top10Pct !== null && g.top10Pct > 40) return false;
+  if (g.onChainTop10Pct !== null && g.onChainTop10Pct > 40) return false;
   if (g.lpControlled === true) return false;
   if (g.holderCount !== null && g.holderCount < config.minHolderCount) return false;
   if (g.slippageOk === false) return false;
@@ -441,6 +516,13 @@ function computeSafetyScore(safety) {
     if (safety.top10Pct < 20) score += 15;
     else if (safety.top10Pct < 30) score += 10;
     else if (safety.top10Pct < 40) score += 5;
+  }
+
+  // On-chain holder concentration backstop (when Birdeye top10Pct is unavailable)
+  if (safety.top10Pct === null && safety.onChainTop10Pct !== null) {
+    if (safety.onChainTop10Pct < 20) score += 15;
+    else if (safety.onChainTop10Pct < 30) score += 10;
+    else if (safety.onChainTop10Pct < 40) score += 5;
   }
 
   if (safety.lpControlled === false) score += 10;

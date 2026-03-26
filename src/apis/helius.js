@@ -99,6 +99,19 @@ async function getAsset(mintAddress) {
   }
 }
 
+// Fetch the 20 largest token accounts for a mint (standard Solana RPC, no DAS).
+// Returns array of { address, amount, decimals, uiAmount, uiAmountString }.
+async function getTokenLargestAccounts(mintAddress) {
+  try {
+    const result = await rpcCall('getTokenLargestAccounts', [mintAddress]);
+    if (!result || !result.value) return null;
+    return result.value;
+  } catch (err) {
+    logger.error({ err, mintAddress }, 'Helius getTokenLargestAccounts failed');
+    return null;
+  }
+}
+
 async function getTransaction(txSignature) {
   try {
     return await rpcCall('getTransaction', [
@@ -167,6 +180,7 @@ module.exports = {
   getAccountInfo,
   parseMintAuthority,
   getAsset,
+  getTokenLargestAccounts,
   getTransaction,
   sendRawTransaction,
   confirmTransaction,

@@ -5,7 +5,6 @@ const statsModel = require('./models/stats');
 const positionModel = require('./models/position');
 const tokenModel = require('./models/token');
 const telegram = require('./telegram');
-const scheduler = require('./scheduler');
 const { formatSol, formatPct, formatUsd, todayDate } = require('./utils');
 
 /**
@@ -53,7 +52,8 @@ async function generateReportText() {
     exitReasons[cat] = (exitReasons[cat] || 0) + 1;
   }
 
-  // Skip reason summary from in-memory buffer
+  // Skip reason summary from in-memory buffer (lazy require to avoid circular dep)
+  const scheduler = require('./scheduler');
   const skips = scheduler.getRecentSkips(30);
   const skipReasons = {};
   for (const skip of skips) {

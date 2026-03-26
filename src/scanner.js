@@ -142,7 +142,7 @@ function checkInclusionFilter(pair) {
   if (!pair.pairCreatedAt) return { passed: false, reason: 'no_created_at' };
 
   const isPaper = config.tradingMode === 'paper';
-  const minLiq = isPaper ? 10000 : config.minLiquidityUsd;      // $10k paper, $25k live
+  const minLiq = config.minLiquidityUsd;                         // $25k for all modes
   const minMcap = isPaper ? 25000 : 50000;                       // $25k paper, $50k live
   const maxAgeH = isPaper ? 336 : config.maxTokenAgeHours;       // 14d paper, config live
 
