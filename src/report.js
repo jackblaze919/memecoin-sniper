@@ -15,7 +15,9 @@ const { formatSol, formatPct, formatUsd, todayDate } = require('./utils');
 async function generateReportText() {
   const s = await statsModel.getToday();
   const todayTrades = await positionModel.getTodayTrades();
-  const candidates = await tokenModel.getCandidates(50);
+  // Use recent candidates (scored within last 10 min) to avoid showing stale
+  // DB records for tokens that left the active pipeline hours ago.
+  const candidates = await tokenModel.getRecentCandidates(10, 50);
   const pendingReview = await positionModel.getPendingReview();
   const pendingPartials = await positionModel.getWithPendingPartials();
 
@@ -100,7 +102,12 @@ async function generateReportText() {
       if (!c.safety_gate_passed) reasons.push('safety');
       if (c.anti_fomo_rejected) reasons.push('FOMO');
       if ((c.total_score || 0) < config.buyScoreThreshold) reasons.push('score');
-      return `${i + 1}. ${c.symbol || '?'} (${(c.total_score || 0).toFixed(1)}) — ${reasons.join(', ') || 'eligible'}`;
+      // Show how recently this candidate was scored
+      const agoMin = c.last_scored_at
+        ? Math.round((Date.now() - new Date(c.last_scored_at).getTime()) / 60000)
+        : null;
+      const agoLabel = agoMin !== null ? ` ${agoMin}m ago` : '';
+      return `${i + 1}. ${c.symbol || '?'} (${(c.total_score || 0).toFixed(1)}) — ${reasons.join(', ') || 'eligible'}${agoLabel}`;
     }),
     ...(unbought.length === 0 ? ['  (none)'] : []),
   ];

@@ -62,6 +62,18 @@ async function getBuyEligible(scoreThreshold = 70) {
   return result.rows;
 }
 
+// Candidates scored within the last N minutes — for accurate "Top Unbought" reports.
+// Avoids showing stale DB records for tokens that left the active pipeline.
+async function getRecentCandidates(minutesAgo = 10, limit = 50) {
+  const result = await db.query(`
+    SELECT * FROM tokens
+    WHERE last_scored_at >= NOW() - INTERVAL '1 minute' * $1
+    ORDER BY total_score DESC NULLS LAST
+    LIMIT $2
+  `, [minutesAgo, limit]);
+  return result.rows;
+}
+
 async function deleteOldest(keepCount = 50) {
   await db.query(`
     DELETE FROM tokens WHERE address IN (
@@ -77,4 +89,4 @@ async function count() {
   return parseInt(result.rows[0].cnt);
 }
 
-module.exports = { upsert, getByAddress, getCandidates, getBuyEligible, deleteOldest, count };
+module.exports = { upsert, getByAddress, getCandidates, getRecentCandidates, getBuyEligible, deleteOldest, count };
