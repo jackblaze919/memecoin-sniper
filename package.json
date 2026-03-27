@@ -8,7 +8,8 @@
     "migrate": "node scripts/migrate.js",
     "test:health": "node scripts/test-health.js",
     "test:quote": "node scripts/test-quote.js",
-    "test:dex": "node scripts/test-dexscreener.js"
+    "test:dex": "node scripts/test-dexscreener.js",
+    "analyze:scores": "node scripts/analyze-scores.js"
   },
   "engines": {
     "node": ">=18.0.0"

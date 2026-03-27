@@ -5,13 +5,14 @@ async function create(pos) {
   const result = await db.query(`
     INSERT INTO positions (token_address, symbol, entry_price, entry_amount_sol,
       entry_amount_tokens, entry_score, entry_reason, entry_tx,
-      holder_count_at_entry, liquidity_at_entry, status, mode)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$11)
+      holder_count_at_entry, liquidity_at_entry, status, mode, entry_data)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'open',$11,$12)
     RETURNING id
   `, [
     pos.tokenAddress, pos.symbol, pos.entryPrice, pos.entryAmountSol,
     pos.entryAmountTokens, pos.entryScore, pos.entryReason, pos.entryTx,
     pos.holderCountAtEntry, pos.liquidityAtEntry, pos.mode || 'paper',
+    pos.entryData ? JSON.stringify(pos.entryData) : null,
   ]);
   return result.rows[0].id;
 }

@@ -116,6 +116,26 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
     return { bought: false, reasons: ['Entry price is 0 — stop loss disabled'] };
   }
 
+  // Build analysis metadata for score-validation layer
+  const pairAgeMin = pair?.pairCreatedAt ? minutesAgo(pair.pairCreatedAt) : null;
+  const entryData = {
+    discoveryScore: breakdown.discoveryScore ?? null,
+    flowScore: breakdown.flowScore ?? null,
+    mispricingScore: breakdown.mispricingScore ?? null,
+    safetyScore: breakdown.safetyScore ?? null,
+    pairAgeMin,
+    marketCapUsd: pair?.marketCapUsd || null,
+    volume1h: pair?.volume1h || null,
+    volume5m: pair?.volume5m || null,
+    txnsBuys1h: pair?.txnsBuys1h || null,
+    txnsSells1h: pair?.txnsSells1h || null,
+    txnsBuys5m: pair?.txnsBuys5m || null,
+    txnsSells5m: pair?.txnsSells5m || null,
+    priceChangeH1: pair?.priceChangeH1 || null,
+    hasBirdeye: !!overview && !overview._negativeCached,
+    priceImpactPct: quote.priceImpactPct || null,
+  };
+
   const posId = await positionModel.create({
     tokenAddress: address,
     symbol,
@@ -128,6 +148,7 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
     holderCountAtEntry: overview?.holderCount || null,
     liquidityAtEntry: pair?.liquidityUsd || null,
     mode: 'paper',
+    entryData,
   });
 
   await statsModel.incrementTrades();
