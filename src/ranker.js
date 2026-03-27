@@ -438,6 +438,31 @@ function computeFlowScore(pair, overview) {
     else if (buyRatio5m < 0.30) score -= 10;
   }
 
+  // --- Flow deterioration penalty ---
+  // If 1h flow is buy-heavy but 5m flow has deteriorated materially,
+  // the token is likely in distribution / rollover phase. These are
+  // the setups that die 4–13 minutes after entry.
+  if (total1h > 10 && total5m > 3) {
+    const buyRatio1h = buys1h / total1h;
+    const buyRatio5m_d = buys5m / total5m;
+    const deterioration = buyRatio1h - buyRatio5m_d; // positive = 5m is weaker
+
+    if (deterioration > 0.30) {
+      // Severe rollover: 1h buy-heavy but 5m is sell-heavy
+      // e.g. 1h=0.70 but 5m=0.35 → distribution phase
+      score -= 20;
+    } else if (deterioration > 0.20) {
+      // Moderate rollover: momentum fading fast
+      // e.g. 1h=0.65 but 5m=0.42
+      score -= 12;
+    } else if (deterioration > 0.12) {
+      // Mild deterioration: caution signal
+      // e.g. 1h=0.65 but 5m=0.50
+      score -= 5;
+    }
+    // If deterioration <= 0.12 or negative (5m stronger), no penalty
+  }
+
   // --- Transaction volume conviction ---
   // High buy count + high volume = real conviction, not wash trading
   if (buys1h > 50 && (pair.volume1h || 0) > 10000) score += 10;
