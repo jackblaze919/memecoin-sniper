@@ -119,10 +119,12 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
   // Build analysis metadata for score-validation layer
   const pairAgeMin = pair?.pairCreatedAt ? minutesAgo(pair.pairCreatedAt) : null;
   const entryData = {
+    // Sub-scores (point-in-time snapshot)
     discoveryScore: breakdown.discoveryScore ?? null,
     flowScore: breakdown.flowScore ?? null,
     mispricingScore: breakdown.mispricingScore ?? null,
     safetyScore: breakdown.safetyScore ?? null,
+    // Market context at entry
     pairAgeMin,
     marketCapUsd: pair?.marketCapUsd || null,
     volume1h: pair?.volume1h || null,
@@ -134,6 +136,13 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
     priceChangeH1: pair?.priceChangeH1 || null,
     hasBirdeye: !!overview && !overview._negativeCached,
     priceImpactPct: quote.priceImpactPct || null,
+    // Experiment / version metadata
+    strategyVersion: config.strategyVersion,
+    rankerVersion: config.rankerVersion,
+    gitCommit: config.gitCommit,
+    flowDeteriorationEnabled: config.flowDeteriorationEnabled,
+    buyThreshold: config.buyScoreThreshold,
+    entryTimestampIso: new Date().toISOString(),
   };
 
   const posId = await positionModel.create({

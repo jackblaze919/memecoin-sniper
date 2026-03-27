@@ -19,6 +19,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // ── CLI args ──
 const args = process.argv.slice(2);
 let sinceDate = null;
+let realOnly = false;         // --real-only: only trades with entry_data (no fallback)
+let versionFilter = null;     // --version 2.1: only trades with this strategyVersion
+let flowDetFilter = null;     // --flow-det true|false
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--days' && args[i + 1]) {
     const d = new Date();
@@ -28,6 +31,20 @@ for (let i = 0; i < args.length; i++) {
   if (args[i] === '--since' && args[i + 1]) {
     sinceDate = new Date(args[i + 1]).toISOString();
   }
+  if (args[i] === '--real-only') realOnly = true;
+  if (args[i] === '--version' && args[i + 1]) versionFilter = args[i + 1];
+  if (args[i] === '--flow-det' && args[i + 1]) flowDetFilter = args[i + 1] === 'true';
+}
+if (args.includes('--help')) {
+  console.log(`Usage: node scripts/analyze-scores.js [options]
+  --days N             Last N days only
+  --since YYYY-MM-DD   Since date
+  --real-only          Only trades with real entry_data snapshots (no fallback)
+  --version X.Y        Only trades with strategyVersion matching
+  --flow-det true      Only trades where flowDeteriorationEnabled was true
+  --flow-det false     Only trades where it was false (pre-patch)
+  --help               Show this help`);
+  process.exit(0);
 }
 
 // ── Flow-deterioration deploy timestamp (cc8bf9f pushed ~2026-03-27 00:00 UTC) ──
@@ -155,7 +172,7 @@ async function main() {
   }
 
   // Normalize: prefer entry_data (point-in-time) over tokens table (latest score)
-  const rows = trades.map((t) => {
+  let rows = trades.map((t) => {
     const ed = t.entry_data || {};
     return {
       id: t.id,
@@ -178,6 +195,14 @@ async function main() {
       marketCapUsd: ed.marketCapUsd ?? null,
       hasSubScores: ed.discoveryScore != null || t.t_discovery != null,
       hasEntryData: t.entry_data != null,
+      // Source quality flag
+      scoreSource: t.entry_data?.discoveryScore != null ? 'entry_snapshot' : (t.t_discovery != null ? 'tokens_fallback' : 'none'),
+      // Version metadata
+      strategyVersion: ed.strategyVersion ?? null,
+      rankerVersion: ed.rankerVersion ?? null,
+      gitCommit: ed.gitCommit ?? null,
+      flowDetEnabled: ed.flowDeteriorationEnabled ?? null,
+      buyThreshold: ed.buyThreshold ?? null,
       // Flow deterioration metric
       flowDeterioration: (ed.txnsBuys1h != null && ed.txnsSells1h != null &&
         ed.txnsBuys5m != null && ed.txnsSells5m != null)
@@ -192,6 +217,29 @@ async function main() {
         : null,
     };
   });
+
+  // Apply CLI filters
+  if (realOnly) {
+    const before = rows.length;
+    rows = rows.filter(r => r.hasEntryData);
+    console.log(`--real-only: filtered ${before} → ${rows.length} trades (entry_data snapshots only)\n`);
+  }
+  if (versionFilter) {
+    const before = rows.length;
+    rows = rows.filter(r => r.strategyVersion === versionFilter);
+    console.log(`--version ${versionFilter}: filtered ${before} → ${rows.length} trades\n`);
+  }
+  if (flowDetFilter !== null) {
+    const before = rows.length;
+    rows = rows.filter(r => r.flowDetEnabled === flowDetFilter);
+    console.log(`--flow-det ${flowDetFilter}: filtered ${before} → ${rows.length} trades\n`);
+  }
+
+  if (rows.length === 0) {
+    console.log('No trades match the specified filters.');
+    await pool.end();
+    return;
+  }
 
   const winners = rows.filter((r) => r.pnlPct >= 0);
   const losers = rows.filter((r) => r.pnlPct < 0);
@@ -216,8 +264,29 @@ async function main() {
   console.log(`Avg loser:            ${fmt(avgLoss, 1)}% (${fmt(avgLossSol, 4)} SOL)`);
   console.log(`Expectancy per trade: ${fmt(expectancy, 4)} SOL`);
   console.log(`Total PnL:            ${fmt(totalPnl, 4)} SOL`);
-  console.log(`Trades with sub-scores: ${rows.filter(r => r.hasSubScores).length}/${rows.length}`);
-  console.log(`Trades with entry_data: ${rows.filter(r => r.hasEntryData).length}/${rows.length}`);
+  const realSnapshots = rows.filter(r => r.hasEntryData).length;
+  const fallbackScores = rows.filter(r => r.scoreSource === 'tokens_fallback').length;
+  const noScores = rows.filter(r => r.scoreSource === 'none').length;
+  console.log(`Trades with entry_data: ${realSnapshots}/${rows.length} (real entry snapshots)`);
+  console.log(`Trades w/ fallback:     ${fallbackScores}/${rows.length} (sub-scores from tokens table — may be stale)`);
+  console.log(`Trades w/ no scores:    ${noScores}/${rows.length}`);
+  if (fallbackScores > 0 && !realOnly) {
+    console.log(`  ⚠ ${fallbackScores} trades use reconstructed sub-scores from tokens table.`);
+    console.log(`    These are latest-scored values, NOT entry-time snapshots. Use --real-only for clean data.`);
+  }
+
+  // Version breakdown
+  const versions = {};
+  for (const r of rows) {
+    const v = r.strategyVersion || 'pre-versioning';
+    versions[v] = (versions[v] || 0) + 1;
+  }
+  if (Object.keys(versions).length > 1 || !versions['pre-versioning']) {
+    console.log(`\nStrategy versions:`);
+    for (const [v, n] of Object.entries(versions).sort()) {
+      console.log(`  ${v.padEnd(18)} ${n} trades`);
+    }
+  }
 
   // Exit reason breakdown
   const exitCounts = {};
@@ -258,8 +327,19 @@ async function main() {
   bar('C. COMPONENT SEPARATION — Winners vs Losers');
 
   const withScores = rows.filter(r => r.hasSubScores);
+  const realScored = withScores.filter(r => r.scoreSource === 'entry_snapshot');
+  const fallbackScored = withScores.filter(r => r.scoreSource === 'tokens_fallback');
   const wScored = withScores.filter(r => r.pnlPct >= 0);
   const lScored = withScores.filter(r => r.pnlPct < 0);
+
+  if (fallbackScored.length > 0 && realScored.length > 0) {
+    console.log(`  Data sources: ${realScored.length} entry snapshots + ${fallbackScored.length} token-table fallback`);
+    console.log(`  ⚠ Fallback scores are latest-scored, not entry-time. Results may be noisy.`);
+    console.log(`  Use --real-only for clean component analysis.\n`);
+  } else if (fallbackScored.length > 0 && realScored.length === 0) {
+    console.log(`  ⚠ ALL sub-scores are from token-table fallback (not entry-time snapshots).`);
+    console.log(`  Results are approximate. Collect more trades with entry_data for reliable analysis.\n`);
+  }
 
   if (withScores.length < 5) {
     console.log(`Only ${withScores.length} trades have sub-scores. Need at least 5 for analysis.`);

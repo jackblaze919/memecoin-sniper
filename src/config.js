@@ -1,6 +1,15 @@
 require('dotenv').config();
+const { execSync } = require('child_process');
 
 const VALID_MODES = ['scanner', 'paper', 'tiny_live', 'live'];
+
+// Experiment versioning — bump these when scoring logic changes materially
+const STRATEGY_VERSION = '2.1';   // 2.0 = DexScreener-primary rewrite, 2.1 = flow-deterioration
+const RANKER_VERSION = '2.1';     // tracks ranker.js scoring changes
+
+// Git commit hash (best-effort, cached at startup)
+let GIT_COMMIT = 'unknown';
+try { GIT_COMMIT = execSync('git rev-parse --short HEAD', { timeout: 2000 }).toString().trim(); } catch (_) {}
 
 // Single mutable config object. All helper functions read from this same object.
 // No spread-export — Telegram mode changes affect the same instance all code uses.
@@ -83,5 +92,11 @@ config.getMaxConcurrentPositions = function getMaxConcurrentPositions() {
   if (config.tradingMode === 'tiny_live') return 1;
   return config.maxConcurrentPositions;
 };
+
+// Experiment metadata — read-only, attached to each trade for analysis
+config.strategyVersion = STRATEGY_VERSION;
+config.rankerVersion = RANKER_VERSION;
+config.gitCommit = GIT_COMMIT;
+config.flowDeteriorationEnabled = true; // set to false if the penalty is removed
 
 module.exports = config;

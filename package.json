@@ -9,7 +9,8 @@
     "test:health": "node scripts/test-health.js",
     "test:quote": "node scripts/test-quote.js",
     "test:dex": "node scripts/test-dexscreener.js",
-    "analyze:scores": "node scripts/analyze-scores.js"
+    "analyze:scores": "node scripts/analyze-scores.js",
+    "verify:entry-data": "node scripts/verify-entry-data.js"
   },
   "engines": {
     "node": ">=18.0.0"
