@@ -45,7 +45,7 @@ const config = {
   // Scanner
   minLiquidityUsd: parseFloat(process.env.MIN_LIQUIDITY_USD) || 25000,
   minHolderCount: parseInt(process.env.MIN_HOLDER_COUNT, 10) || 100,
-  minTokenAgeMinutes: parseInt(process.env.MIN_TOKEN_AGE_MINUTES, 10) || 60,
+  minTokenAgeMinutes: parseInt(process.env.MIN_TOKEN_AGE_MINUTES, 10) || 240,
   maxTokenAgeHours: parseInt(process.env.MAX_TOKEN_AGE_HOURS, 10) || 24,
   buyScoreThreshold: parseFloat(process.env.BUY_SCORE_THRESHOLD) || 70,
   maxActiveCandidates: parseInt(process.env.MAX_ACTIVE_CANDIDATES, 10) || 50,
