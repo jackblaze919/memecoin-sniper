@@ -34,6 +34,7 @@ function registerCommands() {
   bot.onText(/\/skips/, handleSkips);
   bot.onText(/\/risk/, handleRisk);
   bot.onText(/\/report/, handleReport);
+  bot.onText(/\/analyze/, handleAnalyze);
 
   bot.on('polling_error', (err) => {
     logger.error({ err: err.message }, 'Telegram polling error');
@@ -313,6 +314,77 @@ async function handleReport(msg) {
   } catch (err) {
     logger.error({ err }, '/report command failed');
     await reply(msg.chat.id, `❌ Report failed: ${err.message}`);
+  }
+}
+
+async function handleAnalyze(msg) {
+  if (!isAuthorized(msg)) return;
+  try {
+    await reply(msg.chat.id, '🔬 Running quick analysis on closed paper trades...');
+    const db = require('./db');
+    const { rows } = await db.query(`
+      SELECT entry_score, final_pnl_pct, final_pnl_sol, exit_reason,
+             hold_time_minutes, entry_data, entry_timestamp
+      FROM positions
+      WHERE status = 'closed' AND mode = 'paper' AND entry_data IS NOT NULL
+      ORDER BY entry_timestamp DESC
+      LIMIT 100
+    `);
+
+    if (rows.length < 5) {
+      await reply(msg.chat.id, `Only ${rows.length} trades with entry_data. Need 5+ for analysis.`);
+      return;
+    }
+
+    const winners = rows.filter(r => r.final_pnl_pct >= 0);
+    const losers = rows.filter(r => r.final_pnl_pct < 0);
+    const winRate = winners.length / rows.length;
+    const avgWin = winners.length > 0 ? winners.reduce((s, r) => s + r.final_pnl_pct, 0) / winners.length : 0;
+    const avgLoss = losers.length > 0 ? losers.reduce((s, r) => s + r.final_pnl_pct, 0) / losers.length : 0;
+    const totalPnl = rows.reduce((s, r) => s + r.final_pnl_sol, 0);
+    const avgWinSol = winners.length > 0 ? winners.reduce((s, r) => s + r.final_pnl_sol, 0) / winners.length : 0;
+    const avgLossSol = losers.length > 0 ? losers.reduce((s, r) => s + r.final_pnl_sol, 0) / losers.length : 0;
+    const expectancy = winRate * avgWinSol + (1 - winRate) * avgLossSol;
+
+    // Count post-age-filter trades
+    const postAgeFilter = rows.filter(r => r.entry_data?.minTokenAgeMinutes >= 60);
+    const slCount = rows.filter(r => r.exit_reason?.includes('Stop loss')).length;
+    const maxHoldCount = rows.filter(r => r.exit_reason?.includes('Max hold')).length;
+
+    const dateRange = rows.length > 0
+      ? `${new Date(rows[rows.length - 1].entry_timestamp).toISOString().slice(0, 10)} → ${new Date(rows[0].entry_timestamp).toISOString().slice(0, 10)}`
+      : 'N/A';
+
+    const lines = [
+      `🔬 Quick Analysis (last ${rows.length} trades)`,
+      `${dateRange}`,
+      ``,
+      `Win rate: ${(winRate * 100).toFixed(1)}% (${winners.length}W / ${losers.length}L)`,
+      `Avg winner: +${avgWin.toFixed(1)}%`,
+      `Avg loser: ${avgLoss.toFixed(1)}%`,
+      `Expectancy: ${expectancy.toFixed(4)} SOL/trade`,
+      `Total PnL: ${totalPnl.toFixed(4)} SOL`,
+      ``,
+      `Stop losses: ${slCount} (${(slCount / rows.length * 100).toFixed(0)}%)`,
+      `Max hold exits: ${maxHoldCount} (${(maxHoldCount / rows.length * 100).toFixed(0)}%)`,
+      ``,
+      `Post-60m-age-filter: ${postAgeFilter.length} trades`,
+    ];
+
+    if (postAgeFilter.length >= 5) {
+      const pw = postAgeFilter.filter(r => r.final_pnl_pct >= 0);
+      const pwr = pw.length / postAgeFilter.length;
+      const pPnl = postAgeFilter.reduce((s, r) => s + r.final_pnl_sol, 0);
+      lines.push(`  Win rate: ${(pwr * 100).toFixed(1)}%`);
+      lines.push(`  Total PnL: ${pPnl.toFixed(4)} SOL`);
+    } else {
+      lines.push(`  (need 5+ for sub-analysis)`);
+    }
+
+    await reply(msg.chat.id, lines.join('\n'));
+  } catch (err) {
+    logger.error({ err }, '/analyze command failed');
+    await reply(msg.chat.id, `❌ Analyze failed: ${err.message}`);
   }
 }
 

@@ -118,30 +118,50 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
 
   // Build analysis metadata for score-validation layer
   const pairAgeMin = pair?.pairCreatedAt ? minutesAgo(pair.pairCreatedAt) : null;
+
+  // Compute flow deterioration value at entry for post-hoc analysis
+  const total1h = (pair?.txnsBuys1h || 0) + (pair?.txnsSells1h || 0);
+  const total5m = (pair?.txnsBuys5m || 0) + (pair?.txnsSells5m || 0);
+  let flowDetValue = null;
+  if (total1h > 10 && total5m > 3) {
+    flowDetValue = ((pair.txnsBuys1h / total1h) - (pair.txnsBuys5m / total5m));
+  }
+
   const entryData = {
     // Sub-scores (point-in-time snapshot)
     discoveryScore: breakdown.discoveryScore ?? null,
     flowScore: breakdown.flowScore ?? null,
     mispricingScore: breakdown.mispricingScore ?? null,
     safetyScore: breakdown.safetyScore ?? null,
+    totalScore: score,
     // Market context at entry
     pairAgeMin,
+    liquidityUsd: pair?.liquidityUsd || null,
     marketCapUsd: pair?.marketCapUsd || null,
     volume1h: pair?.volume1h || null,
     volume5m: pair?.volume5m || null,
+    volume24h: pair?.volume24h || null,
     txnsBuys1h: pair?.txnsBuys1h || null,
     txnsSells1h: pair?.txnsSells1h || null,
     txnsBuys5m: pair?.txnsBuys5m || null,
     txnsSells5m: pair?.txnsSells5m || null,
     priceChangeH1: pair?.priceChangeH1 || null,
+    priceChangeM5: pair?.priceChangeM5 || null,
     hasBirdeye: !!overview && !overview._negativeCached,
     priceImpactPct: quote.priceImpactPct || null,
+    // Derived signals for analysis
+    flowDetValue,
+    buyRatio1h: total1h > 0 ? (pair?.txnsBuys1h || 0) / total1h : null,
+    buyRatio5m: total5m > 0 ? (pair?.txnsBuys5m || 0) / total5m : null,
+    volLiqRatio: (pair?.liquidityUsd > 0 && pair?.volume1h > 0) ? pair.volume1h / pair.liquidityUsd : null,
+    mcapLiqRatio: (pair?.liquidityUsd > 0 && pair?.marketCapUsd > 0) ? pair.marketCapUsd / pair.liquidityUsd : null,
     // Experiment / version metadata
     strategyVersion: config.strategyVersion,
     rankerVersion: config.rankerVersion,
     gitCommit: config.gitCommit,
     flowDeteriorationEnabled: config.flowDeteriorationEnabled,
     buyThreshold: config.buyScoreThreshold,
+    minTokenAgeMinutes: config.minTokenAgeMinutes,
     entryTimestampIso: new Date().toISOString(),
   };
 
