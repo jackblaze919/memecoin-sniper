@@ -35,6 +35,7 @@ function registerCommands() {
   bot.onText(/\/risk/, handleRisk);
   bot.onText(/\/report/, handleReport);
   bot.onText(/\/analyze/, handleAnalyze);
+  bot.onText(/\/funnel/, handleFunnel);
 
   bot.on('polling_error', (err) => {
     logger.error({ err: err.message }, 'Telegram polling error');
@@ -385,6 +386,56 @@ async function handleAnalyze(msg) {
   } catch (err) {
     logger.error({ err }, '/analyze command failed');
     await reply(msg.chat.id, `❌ Analyze failed: ${err.message}`);
+  }
+}
+
+async function handleFunnel(msg) {
+  if (!isAuthorized(msg)) return;
+  try {
+    const db = require('./db');
+
+    // Get last 3 days of funnel data
+    const { rows } = await db.query(`
+      SELECT date, total_trades, tokens_bought, data
+      FROM daily_stats
+      WHERE date >= CURRENT_DATE - INTERVAL '3 days'
+      ORDER BY date DESC
+    `);
+
+    if (rows.length === 0) {
+      await reply(msg.chat.id, 'No funnel data yet.');
+      return;
+    }
+
+    const lines = ['📊 Pipeline Funnel (last 3 days)', ''];
+
+    for (const row of rows) {
+      const d = row.data || {};
+      const ticks = parseInt(d.funnel_ticks) || 0;
+      const scanned = parseInt(d.funnel_scanned) || 0;
+      const ranked = parseInt(d.funnel_ranked) || 0;
+      const a70 = parseInt(d.funnel_above_70) || 0;
+      const a72 = parseInt(d.funnel_above_72) || 0;
+      const eligible = parseInt(d.funnel_buy_eligible) || 0;
+      const bought = row.tokens_bought || 0;
+      const trades = row.total_trades || 0;
+
+      lines.push(`${row.date.toISOString().slice(0, 10)}:`);
+      lines.push(`  Rank ticks: ${ticks}`);
+      lines.push(`  Candidates: ${ticks > 0 ? Math.round(scanned / ticks) : 0}/tick avg`);
+      lines.push(`  Scored: ${ranked} | ≥70: ${a70} | ≥72: ${a72}`);
+      lines.push(`  Buy eligible: ${eligible} | Bought: ${bought}`);
+      lines.push(`  Trades closed: ${trades}`);
+      if (ticks > 0 && eligible === 0 && ranked > 0) {
+        lines.push(`  ⚠️ STARVATION: candidates scored but 0 eligible`);
+      }
+      lines.push('');
+    }
+
+    await reply(msg.chat.id, lines.join('\n'));
+  } catch (err) {
+    logger.error({ err }, '/funnel command failed');
+    await reply(msg.chat.id, `❌ Funnel failed: ${err.message}`);
   }
 }
 

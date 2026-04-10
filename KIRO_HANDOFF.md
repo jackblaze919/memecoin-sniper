@@ -72,18 +72,19 @@ Discovery works because it captures acceleration (5m vs 1h), not absolute levels
 
 ## Queued Next Moves (in order, one at a time)
 1. ~~60m age filter~~ ✅ Done, analyzed
-2. **240m age filter** ← CURRENT
-3. Rebalance weights: D:40 / F:15 / M:15 / S:30 (or similar)
-4. Raise threshold to 72 if weight rebalance helps
-5. Consider $50k min liquidity filter
+2. **240m age filter** ← CURRENT (collecting trades, no other changes)
+3. Analyze post-240m sample: expectancy, SL rate, fast-death rate, trades/day, component AUC, threshold sweep by expectancy, age buckets within 240m+, liquidity buckets, funnel starvation check
+4. IF expectancy improves + D leads + F/M hurt → rebalance weights
+5. IF expectancy still flat/negative → consider simpler baseline model (age + liq + Discovery + Safety gate)
+6. Threshold and liquidity filter decisions come AFTER weight decision
 
 ## What NOT to Change Yet
-- Don't raise threshold above 70
-- Don't change exits
-- Don't add features
-- Don't rewrite weights
+- Don't rebalance weights — regime changed with 240m filter, old AUCs are historical context
+- Don't raise threshold to 72 — need expectancy data, not just win rate
+- Don't add $50k liquidity filter
 - Don't go tiny_live
-- Don't stack changes — one variable at a time
+- One variable at a time — collect clean post-240m sample first
+- Decision rule: if 240m improves expectancy and D still leads while F/M still hurt → rebalance weights. If expectancy stays flat/negative → consider simpler baseline model (age + liq + Discovery + Safety hard filter)
 
 ## Safety Controls
 - Helius authority check (required)
@@ -153,7 +154,10 @@ The DexScreener-primary model may be too low-resolution. Consider:
 ## Change Log
 | Date | Change | Commit |
 |------|--------|--------|
-| 2026-04-09 | Raise min pair age from 60m to 240m (4h) — 60-120m bucket was 15% win rate | — |
+| 2026-04-10 | Fixed funnel logging bug — nested jsonb_set was silently failing, replaced with read-modify-write | — |
+| 2026-04-10 | Post-240m analysis: 31 trades, win rate 48.4%, expectancy -0.0022 SOL (improved but still negative). PREMATURE — need 50+ trades | — |
+| 2026-04-09 | Added pipeline funnel tracking + /funnel Telegram command (opportunity starvation detection) | — |
+| 2026-04-09 | Raise min pair age from 60m to 240m (4h) — 60-120m bucket was 15% win rate | 3121627 |
 | 2026-04-09 | Analysis: 96 trades post-60m filter. D flipped to best signal, F+M anti-predictive | — |
 | 2026-04-09 | Enhanced entry_data: added totalScore, liquidityUsd, volume24h, priceChangeM5, derived signals (flowDetValue, buyRatio1h/5m, volLiqRatio, mcapLiqRatio), minTokenAgeMinutes config | af3478c |
 | 2026-04-09 | New `scripts/feature-importance.js` — raw feature AUC analysis bypassing the scoring model | af3478c |

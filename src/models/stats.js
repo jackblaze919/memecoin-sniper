@@ -73,6 +73,39 @@ async function incrementBirdeyeCus(count = 1) {
   `, [date, count]);
 }
 
+// Pipeline funnel tracking — opportunity starvation detection.
+// Stored in the JSONB `data` column of daily_stats (no migration needed).
+async function recordFunnel({ scanned, inclusionPass, ranked, above70, above72, buyEligible }) {
+  const date = todayDate();
+  // Read current funnel values, increment, write back.
+  // Simple read-modify-write avoids the fragile nested jsonb_set chain
+  // that was silently failing (all funnel_* fields were null).
+  try {
+    const { rows } = await db.query(
+      `SELECT data FROM daily_stats WHERE date = $1`, [date]
+    );
+    const existing = rows[0]?.data || {};
+    const updated = {
+      ...existing,
+      funnel_ticks: (parseInt(existing.funnel_ticks) || 0) + 1,
+      funnel_scanned: (parseInt(existing.funnel_scanned) || 0) + (scanned || 0),
+      funnel_inclusion_pass: (parseInt(existing.funnel_inclusion_pass) || 0) + (inclusionPass || 0),
+      funnel_ranked: (parseInt(existing.funnel_ranked) || 0) + (ranked || 0),
+      funnel_above_70: (parseInt(existing.funnel_above_70) || 0) + (above70 || 0),
+      funnel_above_72: (parseInt(existing.funnel_above_72) || 0) + (above72 || 0),
+      funnel_buy_eligible: (parseInt(existing.funnel_buy_eligible) || 0) + (buyEligible || 0),
+    };
+    await db.query(
+      `UPDATE daily_stats SET data = $2::jsonb WHERE date = $1`,
+      [date, JSON.stringify(updated)]
+    );
+  } catch (err) {
+    // Non-fatal — funnel is observability only
+    const logger = require('../logger');
+    logger.warn({ err: err.message }, 'recordFunnel failed');
+  }
+}
+
 // Bot state helpers
 async function getState(key) {
   const result = await db.query('SELECT value FROM bot_state WHERE key = $1', [key]);
@@ -90,5 +123,5 @@ async function setState(key, value) {
 module.exports = {
   getToday, incrementTrades, recordWin, recordLoss,
   incrementScanned, incrementBought, setDailyLossLimitHit,
-  incrementBirdeyeCus, getState, setState,
+  incrementBirdeyeCus, recordFunnel, getState, setState,
 };

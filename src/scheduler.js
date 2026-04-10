@@ -128,6 +128,18 @@ async function runRankTick() {
       threshold: config.buyScoreThreshold,
     }, 'Rank tick complete');
 
+    // Track pipeline funnel for opportunity-starvation detection
+    const above72 = ranked.filter((r) => r.totalScore >= 72).length;
+    const statsModel = require('./models/stats');
+    await statsModel.recordFunnel({
+      scanned: candidateMap.size,
+      inclusionPass: candidateMap.size, // already passed inclusion in scanner
+      ranked: ranked.length,
+      above70: aboveThreshold,
+      above72,
+      buyEligible: eligible.length,
+    }).catch(err => logger.warn({ err }, 'Funnel tracking failed'));
+
     // PIPELINE STUCK ALERT — fires once when candidates exist but
     // ranker returns 0 results (likely scoreCandidate is throwing)
     // or when high scores exist but 0 eligible (hidden blocker).
