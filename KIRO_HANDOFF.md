@@ -3,7 +3,7 @@
 > Living document. Updated every time we make changes. Paste this into a new chat if context resets.
 
 ## Last Updated
-2026-04-09 — Post-age-filter analysis on 96 trades. Key findings below.
+2026-04-22 — Liquidity sweep confirmed $100k. Deploying MIN_LIQUIDITY_USD=100000 as next experiment.
 
 ## What This Is
 Solana memecoin scanner/ranker/paper-trading bot. Node.js + Railway + Postgres. Discovers tokens from DexScreener, scores them with a 4-component model (D/F/M/S), paper-buys eligible ones, manages exits, reports via Telegram (@noscopebot).
@@ -37,51 +37,55 @@ Exit Monitor (30s) → Stop loss (30%) | Max hold (60m) | Liq drop (25%) | Parti
 Total score = D×0.25 + F×0.30 + M×0.25 + S×0.20
 Buy threshold: 70
 
-## Key Analysis Results (96 trades, Apr 4–9, post-60m age filter, real snapshots)
-- Win rate: 39.6% — Expectancy: -0.0031 SOL/trade (still negative)
-- Age filter killed fast deaths (14.5% → 6.3%) but 60-120m bucket is a massacre (15% win rate, 85% SL)
-- Discovery flipped to strongest signal: AUC 0.607 (was 0.409 — anti-predictive before)
-- Flow is now anti-predictive: AUC 0.445 (was 0.532)
-- Mispricing is anti-predictive: AUC 0.422
-- Total score: AUC 0.513 = random noise
-- Threshold 72 > 70 (46.3% vs 39.6% win rate)
-- $50-100k liquidity: 59.1% win rate (best bucket)
-- 4h+ pair age: 44% win rate, 12% SL (best age bucket)
+## Key Analysis Results
 
-### Raw Feature Importance (strongest signals)
-| Feature | AUC | Direction |
-|---------|-----|-----------|
-| Discovery score | 0.607 | higher = better |
-| Market cap ($) | 0.604 | higher = better |
-| Liquidity ($) | 0.598 | higher = better |
-| Mispricing score | 0.422 | **ANTI** — higher = worse |
-| Buys 1h (#) | 0.429 | **ANTI** — more buys = worse |
-| Volume 1h ($) | 0.437 | **ANTI** — more volume = worse |
-| Flow score | 0.445 | **ANTI** — higher = worse |
+### Post-240m regime (290 trades, Apr 9–22) — CURRENT
+- Win rate: 49.0% | Expectancy: **+0.0028 SOL/trade** | Total PnL: **+0.824 SOL**
+- Avg winner: +34.1% | Avg loser: -21.6% | Stop-loss rate: 20.0%
+- Buys/day: 20.7 | No pipeline starvation
+- **CONCENTRATION RISK:** Apr 21 = +1.188 SOL (144% of total PnL). Without it, ~breakeven.
+- $100k+ liquidity: 69.6% win rate, +54.9% avg PnL, 6.5% SL (46 trades)
+- $25-100k liquidity: ~44% win rate, negative avg PnL, ~23% SL (240 trades)
+- Vol/Liq 1.0+: 38.4% win rate, -7.5% avg PnL, 37.7% SL (high volume = bad)
+- Threshold 72: +0.0052 SOL expectancy but halves volume
+- Strongest raw signals: pair age (0.586), buy ratio 5m (0.573), liquidity (0.568)
+- Strongest anti-signals: price impact (0.363), vol/liq ratio (0.386), all volume metrics
 
-### Interpretation
-Flow (30% weight) and Mispricing (25% weight) = 55% of the score, both anti-predictive.
-High 1h volume/buys = you're late to the party. DexScreener data is lagging.
-Discovery works because it captures acceleration (5m vs 1h), not absolute levels.
+### Post-60m regime (96 trades, Apr 4–9) — HISTORICAL
+- Win rate: 39.6% | Expectancy: -0.0031 SOL/trade
+- Discovery AUC 0.607 (best), Flow 0.445 (anti), Mispricing 0.422 (anti)
+
+### Pre-filter (117 trades, Mar 28–Apr 4) — HISTORICAL
+- Win rate: 41.9% | Expectancy: +0.0002 SOL/trade (breakeven)
+- Total score AUC 0.398 (anti-predictive)
 
 ## Current Experiment
-**240-minute (4h) minimum pair age filter** (pending deploy)
-- Previous: 60m filter killed sub-15m fast deaths but 60-120m still terrible
-- 4h+ bucket showed 44% win rate, 12% SL in the data
-- Next experiment after this: rebalance weights (kill Flow/Mispricing, boost Discovery)
+**$100k minimum liquidity filter** (pending deploy)
+- Previous: $25k floor. Sub-$100k trades were net -0.431 SOL across 240 trades.
+- Liquidity sweep on 290 post-240m trades showed monotonic improvement at every threshold:
+  - $25k: 290 trades, +0.0028 expect, 20% SL
+  - $50k: 138 trades, +0.0077 expect, 17.4% SL
+  - $75k: 86 trades, +0.0132 expect, 11.6% SL
+  - $100k: 50 trades, +0.0251 expect, 6% SL
+  - $125k: 39 trades, +0.0328 expect, 0% SL
+- $100k chosen over $75k because it beats on every metric (ChatGPT decision rule)
+- Strategy version bumped to 2.2
+- Expected ~3.8 buys/day (down from 22.1)
+- No other changes: same weights, same threshold 70, same exits
 
-## Queued Next Moves (in order, one at a time)
-1. ~~60m age filter~~ ✅ Done, analyzed
-2. **240m age filter** ← CURRENT (collecting trades, no other changes)
-3. Analyze post-240m sample: expectancy, SL rate, fast-death rate, trades/day, component AUC, threshold sweep by expectancy, age buckets within 240m+, liquidity buckets, funnel starvation check
-4. IF expectancy improves + D leads + F/M hurt → rebalance weights
-5. IF expectancy still flat/negative → consider simpler baseline model (age + liq + Discovery + Safety gate)
-6. Threshold and liquidity filter decisions come AFTER weight decision
+## Queued Next Moves (awaiting ChatGPT judgment)
+1. ~~60m age filter~~ ✅ Done
+2. ~~240m age filter~~ ✅ Done — strategy flipped to fragile-positive
+3. **$100k liquidity filter** ← CURRENT (deploying now)
+4. Collect clean post-$100k sample, analyze: expectancy, SL rate, trades/day, starvation check
+5. CANDIDATE: Raise threshold to 72 (showed +0.0052 vs +0.0028 in 240m data)
+6. CANDIDATE: Weight rebalance (component AUCs still unstable)
+7. LONG-TERM: Simplify to age + liquidity + Discovery + Safety gate
 
 ## What NOT to Change Yet
-- Don't rebalance weights — regime changed with 240m filter, old AUCs are historical context
-- Don't raise threshold to 72 — need expectancy data, not just win rate
-- Don't add $50k liquidity filter
+- Don't rebalance weights — collect post-$100k data first
+- Don't raise threshold to 72 — need post-$100k expectancy data
+- Don't go tiny_live yet — need clean post-$100k sample to validate
 - Don't go tiny_live
 - One variable at a time — collect clean post-240m sample first
 - Decision rule: if 240m improves expectancy and D still leads while F/M still hurt → rebalance weights. If expectancy stays flat/negative → consider simpler baseline model (age + liq + Discovery + Safety hard filter)
@@ -154,6 +158,9 @@ The DexScreener-primary model may be too low-resolution. Consider:
 ## Change Log
 | Date | Change | Commit |
 |------|--------|--------|
+| 2026-04-22 | Liquidity sweep: $50k/$75k/$100k/$125k all tested. $100k chosen — 70% win, +0.0251 expect, 6% SL | — |
+| 2026-04-22 | Raise MIN_LIQUIDITY_USD from $25k to $100k. Strategy version bumped to 2.2 | pending |
+| 2026-04-22 | Full post-240m analysis: 290 trades, +0.0028 SOL expectancy, fragile-positive. $100k+ liq = 69.6% win rate. Awaiting ChatGPT judgment | — |
 | 2026-04-10 | Fixed funnel logging bug — nested jsonb_set was silently failing, replaced with read-modify-write | — |
 | 2026-04-10 | Post-240m analysis: 31 trades, win rate 48.4%, expectancy -0.0022 SOL (improved but still negative). PREMATURE — need 50+ trades | — |
 | 2026-04-09 | Added pipeline funnel tracking + /funnel Telegram command (opportunity starvation detection) | — |
