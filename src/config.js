@@ -4,7 +4,7 @@ const { execSync } = require('child_process');
 const VALID_MODES = ['scanner', 'paper', 'tiny_live', 'live'];
 
 // Experiment versioning — bump these when scoring logic changes materially
-const STRATEGY_VERSION = '2.2';   // 2.0 = DexScreener-primary, 2.1 = flow-deterioration, 2.2 = $100k liq floor
+const STRATEGY_VERSION = '2.3';   // 2.0 = DexScreener-primary, 2.1 = flow-deterioration, 2.2 = $100k liq floor, 2.3 = 120m max-hold
 const RANKER_VERSION = '2.1';     // tracks ranker.js scoring changes
 
 // Git commit hash (best-effort, cached at startup)
@@ -41,6 +41,7 @@ const config = {
   dailyLossLimitSol: parseFloat(process.env.DAILY_LOSS_LIMIT_SOL) || 0.1,
   solReserve: parseFloat(process.env.SOL_RESERVE) || 0.05,
   stopLossPct: parseFloat(process.env.STOP_LOSS_PCT) || 30,
+  maxHoldMinutes: parseInt(process.env.MAX_HOLD_MINUTES, 10) || 120,
 
   // Scanner
   minLiquidityUsd: parseFloat(process.env.MIN_LIQUIDITY_USD) || 100000,

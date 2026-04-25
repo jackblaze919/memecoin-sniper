@@ -162,6 +162,7 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
     flowDeteriorationEnabled: config.flowDeteriorationEnabled,
     buyThreshold: config.buyScoreThreshold,
     minTokenAgeMinutes: config.minTokenAgeMinutes,
+    maxHoldMinutes: config.maxHoldMinutes,
     entryTimestampIso: new Date().toISOString(),
   };
 
@@ -455,8 +456,8 @@ function checkExitConditions(pos, pair, pnlPct, holdMinutes) {
     return `Stop loss at ${pnlPct.toFixed(1)}%`;
   }
 
-  // Max hold time (1 hour)
-  if (holdMinutes >= 60) {
+  // Max hold time
+  if (holdMinutes >= config.maxHoldMinutes) {
     return `Max hold time: ${holdMinutes.toFixed(0)} min`;
   }
 

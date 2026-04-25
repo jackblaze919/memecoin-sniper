@@ -3,7 +3,7 @@
 > Living document. Updated every time we make changes. Paste this into a new chat if context resets.
 
 ## Last Updated
-2026-04-22 — Liquidity sweep confirmed $100k. Deploying MIN_LIQUIDITY_USD=100000 as next experiment.
+2026-04-25 — Max-hold extended from 60m to 120m (v2.3). ChatGPT approved: exit is the binding constraint, not entry selection.
 
 ## What This Is
 Solana memecoin scanner/ranker/paper-trading bot. Node.js + Railway + Postgres. Discovers tokens from DexScreener, scores them with a 4-component model (D/F/M/S), paper-buys eligible ones, manages exits, reports via Telegram (@noscopebot).
@@ -60,18 +60,13 @@ Buy threshold: 70
 - Total score AUC 0.398 (anti-predictive)
 
 ## Current Experiment
-**$100k minimum liquidity filter** (pending deploy)
-- Previous: $25k floor. Sub-$100k trades were net -0.431 SOL across 240 trades.
-- Liquidity sweep on 290 post-240m trades showed monotonic improvement at every threshold:
-  - $25k: 290 trades, +0.0028 expect, 20% SL
-  - $50k: 138 trades, +0.0077 expect, 17.4% SL
-  - $75k: 86 trades, +0.0132 expect, 11.6% SL
-  - $100k: 50 trades, +0.0251 expect, 6% SL
-  - $125k: 39 trades, +0.0328 expect, 0% SL
-- $100k chosen over $75k because it beats on every metric (ChatGPT decision rule)
-- Strategy version bumped to 2.2
-- Expected ~3.8 buys/day (down from 22.1)
-- No other changes: same weights, same threshold 70, same exits
+**120-minute max-hold** (pending deploy, v2.3)
+- Previous: 60m max-hold caused 95% of v2.2 exits, compressing avg winner to +5.1%
+- Hypothesis: $100k+ tokens move slower, need more time for winners to develop
+- Max-hold now configurable via MAX_HOLD_MINUTES env var (default 120)
+- Strategy version bumped to 2.3
+- No other changes: same $100k liq, same 240m age, same threshold 70, same weights, same stop-loss/partials
+- Decision rule: if 120m expands winners without reopening major downside → keep. If ugly losses return → revert focus to Mispricing weight.
 
 ## Queued Next Moves (awaiting ChatGPT judgment)
 1. ~~60m age filter~~ ✅ Done
@@ -158,6 +153,9 @@ The DexScreener-primary model may be too low-resolution. Consider:
 ## Change Log
 | Date | Change | Commit |
 |------|--------|--------|
+| 2026-04-25 | Extend max-hold from 60m to 120m (v2.3). Made configurable via MAX_HOLD_MINUTES env var. | pending |
+| 2026-04-25 | Full v2.2 analysis: 21 trades, -0.0011 expect, 95% max-hold exits, avg winner +5.1% (collapsed from +34.1%). Filter works but max-hold is bottleneck. | — |
+| 2026-04-24 | v2.2 sanity check: 11 trades, 0% SL, 0% fast deaths, but avg winner compressed to +3.2%. All max-hold exits. Too early to conclude. | — |
 | 2026-04-22 | Liquidity sweep: $50k/$75k/$100k/$125k all tested. $100k chosen — 70% win, +0.0251 expect, 6% SL | — |
 | 2026-04-22 | Raise MIN_LIQUIDITY_USD from $25k to $100k. Strategy version bumped to 2.2 | pending |
 | 2026-04-22 | Full post-240m analysis: 290 trades, +0.0028 SOL expectancy, fragile-positive. $100k+ liq = 69.6% win rate. Awaiting ChatGPT judgment | — |
