@@ -104,6 +104,40 @@ function defineVariants() {
     // Combined: no-mispricing + threshold 72
     { name: 'no-M+t72', minLiq: 100000, minAge: 240, threshold: 72, maxHold: 120,
       weights: { D: 0.35, F: 0.30, M: 0.00, S: 0.35 } },
+
+    // ── SIMPLIFIED MODELS (ChatGPT-requested comparison) ──
+
+    // Filter-only: age + liquidity + safety (no score at all)
+    { name: 'SIMPLE-filters', minLiq: 100000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true },
+
+    // Filter + buyRatio5m > 0.50 (the consistent raw signal)
+    { name: 'SIMPLE-br5m>50', minLiq: 100000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true, minBuyRatio5m: 0.50 },
+
+    // Filter + buyRatio5m > 0.55
+    { name: 'SIMPLE-br5m>55', minLiq: 100000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true, minBuyRatio5m: 0.55 },
+
+    // Filter + buyRatio5m > 0.60
+    { name: 'SIMPLE-br5m>60', minLiq: 100000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true, minBuyRatio5m: 0.60 },
+
+    // Filter + low vol/liq ratio (< 1.0 — high vol/liq is anti-predictive)
+    { name: 'SIMPLE-lowVolLiq', minLiq: 100000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true, maxVolLiqRatio: 1.0 },
+
+    // Filter + buyRatio5m > 0.55 + low vol/liq
+    { name: 'SIMPLE-br55+vlr', minLiq: 100000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true, minBuyRatio5m: 0.55, maxVolLiqRatio: 1.0 },
+
+    // Simplified at $125k liq
+    { name: 'SIMPLE-125k', minLiq: 125000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true },
+
+    // Simplified $125k + buyRatio5m > 0.55
+    { name: 'SIMPLE-125k+br55', minLiq: 125000, minAge: 240, threshold: 0, maxHold: 120,
+      weights: null, rulesOnly: true, minBuyRatio5m: 0.55 },
   ];
 }
 
@@ -125,11 +159,14 @@ function wouldPass(trade, variant) {
   if (trade.liq != null && trade.liq < variant.minLiq) return false;
   // Filter: pair age
   if (trade.pairAgeMin != null && trade.pairAgeMin < variant.minAge) return false;
-  // Filter: max hold — simulate exit outcome
-  // We can't truly simulate different hold times, but we CAN check:
-  // if maxHold < actual hold time, the trade would have exited earlier (at max-hold)
-  // if maxHold > actual hold time, the trade outcome is unchanged
-  // This is an approximation — we don't have minute-by-minute price data
+  // Filter: buyRatio5m minimum (simplified model signal)
+  if (variant.minBuyRatio5m != null) {
+    if (trade.buyRatio5m == null || trade.buyRatio5m < variant.minBuyRatio5m) return false;
+  }
+  // Filter: vol/liq ratio maximum (high vol/liq is anti-predictive)
+  if (variant.maxVolLiqRatio != null) {
+    if (trade.volLiqRatio != null && trade.volLiqRatio > variant.maxVolLiqRatio) return false;
+  }
   // Score threshold
   if (!variant.rulesOnly && variant.threshold > 0) {
     const score = recomputeScore(trade, variant.weights);
@@ -266,6 +303,10 @@ async function main() {
       S: ed.safetyScore ?? null,
       version: ed.strategyVersion ?? null,
       maxHoldConfig: ed.maxHoldMinutes ?? null,
+      // Raw signals for simplified models
+      buyRatio5m: ed.buyRatio5m ?? null,
+      buyRatio1h: ed.buyRatio1h ?? null,
+      volLiqRatio: ed.volLiqRatio ?? null,
     };
   });
 

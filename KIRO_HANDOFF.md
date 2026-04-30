@@ -3,7 +3,7 @@
 > Living document. Updated every time we make changes. Paste this into a new chat if context resets.
 
 ## Last Updated
-2026-04-25 — Built offline experiment harness. v2.3 (120m hold) remains live control. No strategy changes.
+2026-04-29 — Offline experiment harness run on 525 trades. Filters dominate; score weights are noise. $125k liq is the candidate next move but concentration risk is extreme. Holding v2.3.
 
 ## What This Is
 Solana memecoin scanner/ranker/paper-trading bot. Node.js + Railway + Postgres. Discovers tokens from DexScreener, scores them with a 4-component model (D/F/M/S), paper-buys eligible ones, manages exits, reports via Telegram (@noscopebot).
@@ -69,20 +69,20 @@ Buy threshold: 70
 - Decision rule: if 120m expands winners without reopening major downside → keep. If ugly losses return → revert focus to Mispricing weight.
 
 ## Queued Next Moves (awaiting ChatGPT judgment)
-1. ~~60m age filter~~ ✅ Done
-2. ~~240m age filter~~ ✅ Done — strategy flipped to fragile-positive
-3. **$100k liquidity filter** ← CURRENT (deploying now)
-4. Collect clean post-$100k sample, analyze: expectancy, SL rate, trades/day, starvation check
-5. CANDIDATE: Raise threshold to 72 (showed +0.0052 vs +0.0028 in 240m data)
-6. CANDIDATE: Weight rebalance (component AUCs still unstable)
-7. LONG-TERM: Simplify to age + liquidity + Discovery + Safety gate
+1. ~~60m age filter~~ ✅
+2. ~~240m age filter~~ ✅
+3. ~~$100k liquidity filter~~ ✅
+4. ~~120m max-hold~~ ✅ (v2.3 live)
+5. **CANDIDATE: Raise liq to $125k** — offline harness: 68% win, 2% SL, +0.0267 expect (50 holdout trades). Concentration risk extreme. Wait for v2.3 sustained validation.
+6. CANDIDATE: Threshold 72 — +0.0412 holdout expect but only 29 trades
+7. FINDING: Weight rebalancing is irrelevant — filters dominate, score adds no differentiation
+8. LONG-TERM: Simplify to age + liquidity + safety gate + single timing signal
 
 ## What NOT to Change Yet
-- Don't rebalance weights — collect post-$100k data first
-- Don't raise threshold to 72 — need post-$100k expectancy data
-- Don't go tiny_live yet — need clean post-$100k sample to validate
-- Don't go tiny_live
-- One variable at a time — collect clean post-240m sample first
+- Don't deploy $125k liq yet — need v2.3 to prove sustained positive expectancy without blowout-day dependence
+- Don't raise threshold — 29 holdout trades is too thin
+- Don't rebalance weights — harness proved they don't matter once filters are applied
+- Don't go tiny_live — concentration risk too high
 - Decision rule: if 240m improves expectancy and D still leads while F/M still hurt → rebalance weights. If expectancy stays flat/negative → consider simpler baseline model (age + liq + Discovery + Safety hard filter)
 
 ## Safety Controls
@@ -153,6 +153,8 @@ The DexScreener-primary model may be too low-resolution. Consider:
 ## Change Log
 | Date | Change | Commit |
 |------|--------|--------|
+| 2026-04-29 | Added 8 simplified model variants to offline harness: filter-only, buyRatio5m thresholds, vol/liq filter, $125k combos | pending |
+| 2026-04-29 | Offline experiment harness: 525 trades, 16 variants. Filters dominate; weights are noise. $125k liq is candidate next move. Concentration risk extreme. | de41db7 |
 | 2026-04-25 | Built offline experiment harness (scripts/offline-experiment.js) — tests 16 variants with train/holdout split | pending |
 | 2026-04-25 | Extend max-hold from 60m to 120m (v2.3). Made configurable via MAX_HOLD_MINUTES env var. | dc7cbc4 |
 | 2026-04-25 | Full v2.2 analysis: 21 trades, -0.0011 expect, 95% max-hold exits, avg winner +5.1% (collapsed from +34.1%). Filter works but max-hold is bottleneck. | — |
