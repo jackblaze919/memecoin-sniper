@@ -3,7 +3,7 @@
 > Living document. Updated every time we make changes. Paste this into a new chat if context resets.
 
 ## Last Updated
-2026-04-25 — Max-hold extended from 60m to 120m (v2.3). ChatGPT approved: exit is the binding constraint, not entry selection.
+2026-04-25 — Built offline experiment harness. v2.3 (120m hold) remains live control. No strategy changes.
 
 ## What This Is
 Solana memecoin scanner/ranker/paper-trading bot. Node.js + Railway + Postgres. Discovers tokens from DexScreener, scores them with a 4-component model (D/F/M/S), paper-buys eligible ones, manages exits, reports via Telegram (@noscopebot).
@@ -153,7 +153,8 @@ The DexScreener-primary model may be too low-resolution. Consider:
 ## Change Log
 | Date | Change | Commit |
 |------|--------|--------|
-| 2026-04-25 | Extend max-hold from 60m to 120m (v2.3). Made configurable via MAX_HOLD_MINUTES env var. | pending |
+| 2026-04-25 | Built offline experiment harness (scripts/offline-experiment.js) — tests 16 variants with train/holdout split | pending |
+| 2026-04-25 | Extend max-hold from 60m to 120m (v2.3). Made configurable via MAX_HOLD_MINUTES env var. | dc7cbc4 |
 | 2026-04-25 | Full v2.2 analysis: 21 trades, -0.0011 expect, 95% max-hold exits, avg winner +5.1% (collapsed from +34.1%). Filter works but max-hold is bottleneck. | — |
 | 2026-04-24 | v2.2 sanity check: 11 trades, 0% SL, 0% fast deaths, but avg winner compressed to +3.2%. All max-hold exits. Too early to conclude. | — |
 | 2026-04-22 | Liquidity sweep: $50k/$75k/$100k/$125k all tested. $100k chosen — 70% win, +0.0251 expect, 6% SL | — |

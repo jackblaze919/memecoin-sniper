@@ -11,6 +11,8 @@
     "test:dex": "node scripts/test-dexscreener.js",
     "analyze:scores": "node scripts/analyze-scores.js",
     "analyze:features": "node scripts/feature-importance.js",
+    "analyze:experiment": "node scripts/offline-experiment.js",
+    "analyze:liquidity": "node scripts/liquidity-sweep.js",
     "verify:entry-data": "node scripts/verify-entry-data.js"
   },
   "engines": {
