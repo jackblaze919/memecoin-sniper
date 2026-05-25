@@ -161,8 +161,12 @@ async function executePaperBuy(address, symbol, score, lamports, positionSol, pa
     gitCommit: config.gitCommit,
     flowDeteriorationEnabled: config.flowDeteriorationEnabled,
     buyThreshold: config.buyScoreThreshold,
+    scoreThresholdUsed: false, // v2.4: composite score does NOT control buys
     minTokenAgeMinutes: config.minTokenAgeMinutes,
     maxHoldMinutes: config.maxHoldMinutes,
+    minBuyRatio5m: config.minBuyRatio5m,
+    maxVolLiqRatio: config.maxVolLiqRatio,
+    minLiquidityUsd: config.minLiquidityUsd,
     entryTimestampIso: new Date().toISOString(),
   };
 

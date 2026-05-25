@@ -117,7 +117,7 @@ async function scoreCandidate(address, candidate) {
     safetyGatePassed,
     antiFomoRejected: antiFomo.rejected,
     antiFomoReason: antiFomo.reason,
-    buyEligible: totalScore >= config.buyScoreThreshold && safetyGatePassed && !antiFomo.rejected,
+    buyEligible: checkBuyEligibility(pair, safetyGatePassed, antiFomo),
     holderCount: overview?.holderCount || safety.holderCount,
     liquidityUsd: pair?.liquidityUsd,
     pair,
@@ -555,6 +555,36 @@ function computeSafetyScore(safety) {
   if (safety.hasTransferFee === false) score += 5;
 
   return clamp(score, 0, 100);
+}
+
+// ---- Buy Eligibility (v2.4: filter-only, no composite score threshold) ----
+// The composite score is logged for analysis but does NOT control buy decisions.
+// Buy eligibility is determined entirely by:
+//   1. Safety gate passed (Helius authority check)
+//   2. Anti-FOMO not triggered
+//   3. buyRatio5m > MIN_BUY_RATIO_5M (default 0.55)
+//   4. vol/liq ratio < MAX_VOL_LIQ_RATIO (default 1.0)
+function checkBuyEligibility(pair, safetyGatePassed, antiFomo) {
+  if (!safetyGatePassed) return false;
+  if (antiFomo.rejected) return false;
+
+  // buyRatio5m: buys / (buys + sells) in last 5 minutes
+  const buys5m = pair?.txnsBuys5m || 0;
+  const sells5m = pair?.txnsSells5m || 0;
+  const total5m = buys5m + sells5m;
+  if (total5m < 3) return false; // not enough data to compute ratio
+  const buyRatio5m = buys5m / total5m;
+  if (buyRatio5m < config.minBuyRatio5m) return false;
+
+  // vol/liq ratio: reject high-volume-relative-to-liquidity tokens (crash risk)
+  const vol1h = pair?.volume1h || 0;
+  const liq = pair?.liquidityUsd || 0;
+  if (liq > 0 && vol1h > 0) {
+    const volLiqRatio = vol1h / liq;
+    if (volLiqRatio > config.maxVolLiqRatio) return false;
+  }
+
+  return true;
 }
 
 // ---- Anti-FOMO ----

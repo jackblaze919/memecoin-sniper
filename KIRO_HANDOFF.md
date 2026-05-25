@@ -3,7 +3,7 @@
 > Living document. Updated every time we make changes. Paste this into a new chat if context resets.
 
 ## Last Updated
-2026-04-29 — Offline experiment harness run on 525 trades. Filters dominate; score weights are noise. $125k liq is the candidate next move but concentration risk is extreme. Holding v2.3.
+2026-05-25 — Deploying v2.4: filter-only model. Composite score removed from buy decisions. buyRatio5m + vol/liq are the new gates.
 
 ## What This Is
 Solana memecoin scanner/ranker/paper-trading bot. Node.js + Railway + Postgres. Discovers tokens from DexScreener, scores them with a 4-component model (D/F/M/S), paper-buys eligible ones, manages exits, reports via Telegram (@noscopebot).
@@ -25,14 +25,28 @@ Executor → Paper buy (Jupiter quote for realistic pricing)
 Exit Monitor (30s) → Stop loss (30%) | Max hold (60m) | Liq drop (25%) | Partials (80%/300%/500%)
 ```
 
-## Scoring Model (ANTI-PREDICTIVE — needs rework)
-| Component | Weight | AUC (v2.1 analysis) | Status |
-|-----------|--------|---------------------|--------|
-| Discovery (D) | 25% | 0.409 | **Anti-predictive** |
-| Flow (F) | 30% | 0.532 | Weak positive (best) |
-| Mispricing (M) | 25% | 0.461 | Anti-predictive |
-| Safety (S) | 20% | 0.495 | Random |
-| **Total** | 100% | **0.398** | **Anti-predictive** |
+## Scoring Model — PROVEN DEAD WEIGHT
+The composite D/F/M/S score adds zero discriminating power once filters are applied.
+Offline harness proved: SIMPLE-filters (no score) produces byte-for-byte identical results to v2.3-control.
+Every trade that passes liq+age+safety filters also passes the score threshold of 70.
+
+**The filters ARE the strategy. The score is noise.**
+
+| Component | Weight | Status |
+|-----------|--------|--------|
+| Discovery (D) | 25% | Weak positive in isolation, irrelevant in composite |
+| Flow (F) | 30% | Anti-predictive |
+| Mispricing (M) | 25% | Strongly anti-predictive |
+| Safety (S) | 20% | Used as hard gate, not score |
+
+### What actually predicts outcomes (offline harness, 525 trades)
+| Signal | Evidence | Robust? |
+|--------|----------|---------|
+| buyRatio5m > 55% | Only signal positive in BOTH search and holdout | ✅ YES |
+| Liquidity ≥ $125k | 68-70% win rate, 2% SL | ✅ YES |
+| Pair age ≥ 240m | Killed fast-death failure mode | ✅ YES |
+| Safety gate | Hard filter, not scored | ✅ YES |
+| Composite score ≥ 70 | Zero additional filtering power | ❌ DEAD |
 
 Total score = D×0.25 + F×0.30 + M×0.25 + S×0.20
 Buy threshold: 70
@@ -60,30 +74,36 @@ Buy threshold: 70
 - Total score AUC 0.398 (anti-predictive)
 
 ## Current Experiment
-**120-minute max-hold** (pending deploy, v2.3)
-- Previous: 60m max-hold caused 95% of v2.2 exits, compressing avg winner to +5.1%
-- Hypothesis: $100k+ tokens move slower, need more time for winners to develop
-- Max-hold now configurable via MAX_HOLD_MINUTES env var (default 120)
-- Strategy version bumped to 2.3
-- No other changes: same $100k liq, same 240m age, same threshold 70, same weights, same stop-loss/partials
-- Decision rule: if 120m expands winners without reopening major downside → keep. If ugly losses return → revert focus to Mispricing weight.
+**v2.4 — Filter-only model (SIMPLE-br55+vlr)** (pending deploy)
+- Composite score threshold REMOVED from buy decisions
+- Buy eligibility now determined by:
+  1. Safety gate passed
+  2. Anti-FOMO not triggered
+  3. buyRatio5m > 0.55 (configurable: MIN_BUY_RATIO_5M)
+  4. vol/liq ratio < 1.0 (configurable: MAX_VOL_LIQ_RATIO)
+- Scores still computed and logged in entry_data for analysis — just don't control buys
+- Offline harness: +0.0097 holdout expect, 63.3% win, 4.2% SL, robust in both search+holdout
+- v2.3 was conclusively negative: -0.376 SOL over 158 trades, 25% SL rate
 
-## Queued Next Moves (awaiting ChatGPT judgment)
+## Queued Next Moves
 1. ~~60m age filter~~ ✅
 2. ~~240m age filter~~ ✅
 3. ~~$100k liquidity filter~~ ✅
 4. ~~120m max-hold~~ ✅ (v2.3 live)
-5. **CANDIDATE: Raise liq to $125k** — offline harness: 68% win, 2% SL, +0.0267 expect (50 holdout trades). Concentration risk extreme. Wait for v2.3 sustained validation.
-6. CANDIDATE: Threshold 72 — +0.0412 holdout expect but only 29 trades
-7. FINDING: Weight rebalancing is irrelevant — filters dominate, score adds no differentiation
-8. LONG-TERM: Simplify to age + liquidity + safety gate + single timing signal
+5. **NEXT DEPLOY CANDIDATE: SIMPLE-125k+br55** — filter-only model:
+   - Liquidity ≥ $125k, Age ≥ 240m, Safety gate, buyRatio5m > 55%
+   - No composite score, no threshold
+   - Holdout: 47 trades, 70.2% win, +0.0271 expect, 2.1% SL
+   - Only variant robust in BOTH search and holdout
+   - **DO NOT DEPLOY YET** — search N too thin (8 trades). Re-run harness in 1-2 weeks.
+6. FALLBACK: $125k liq only (no buyRatio5m) if br5m signal fades
+7. LONG-TERM: Drop composite score entirely from codebase
 
 ## What NOT to Change Yet
-- Don't deploy $125k liq yet — need v2.3 to prove sustained positive expectancy without blowout-day dependence
-- Don't raise threshold — 29 holdout trades is too thin
-- Don't rebalance weights — harness proved they don't matter once filters are applied
-- Don't go tiny_live — concentration risk too high
-- Decision rule: if 240m improves expectancy and D still leads while F/M still hurt → rebalance weights. If expectancy stays flat/negative → consider simpler baseline model (age + liq + Discovery + Safety hard filter)
+- Don't deploy SIMPLE-125k+br55 — search-period evidence too thin
+- Don't raise threshold — composite score is dead weight anyway
+- Don't rebalance weights — harness proved they don't matter
+- Don't go tiny_live — concentration risk too high (top 3 days = 99% of PnL)
 
 ## Safety Controls
 - Helius authority check (required)
@@ -153,6 +173,10 @@ The DexScreener-primary model may be too low-resolution. Consider:
 ## Change Log
 | Date | Change | Commit |
 |------|--------|--------|
+| 2026-05-25 | Deploy v2.4: filter-only model. buyRatio5m>0.55 + vol/liq<1.0. Composite score removed from buy decisions. | pending |
+| 2026-05-24 | Full v2.3 analysis: 158 trades, -0.0024 expect, -0.376 SOL. 25% SL rate. Honeymoon over. | — |
+| 2026-05-24 | Harness refresh: SIMPLE-br55+vlr is new robust leader (+0.0014 search, +0.0097 holdout, 4.2% SL) | — |
+| 2026-04-29 | Simplified model comparison: buyRatio5m is the only robust signal. Composite score = dead weight. SIMPLE-125k+br55 is candidate next deploy. | — |
 | 2026-04-29 | Added 8 simplified model variants to offline harness: filter-only, buyRatio5m thresholds, vol/liq filter, $125k combos | pending |
 | 2026-04-29 | Offline experiment harness: 525 trades, 16 variants. Filters dominate; weights are noise. $125k liq is candidate next move. Concentration risk extreme. | de41db7 |
 | 2026-04-25 | Built offline experiment harness (scripts/offline-experiment.js) — tests 16 variants with train/holdout split | pending |
